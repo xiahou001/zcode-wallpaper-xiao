@@ -109,15 +109,29 @@
     clearInterval(sceneWatchdog);
     // 首帧看护:renderers 在 pkg 整包下载完之前不发任何东西,预算随包大小放宽;
     // 就绪判定 = __wp 存在且 __wpStats 报告 fps>0(只查存在会漏掉"加载了但渲染不出")
-    const budgetMs = 12000 + Math.min(18000, Math.round((w.sizeBytes || 0) / 2e6) * 1000);
+    const budgetMs = 12000 + Math.min(90000, Math.round((w.sizeBytes || 0) / 1e6) * 400);   // 大包按大小放宽:235MB ≈ 106s
     let startAt = Date.now();
     sceneWatchdog = setInterval(() => {
       if (layer !== iframe || mountedId !== w.id) { clearInterval(sceneWatchdog); return; }
       if (document.hidden) { startAt = Date.now(); return; }   // 遮挡暂停期间不计入预算
+      fetch('/api/scene-progress?token=' + encodeURIComponent(w.sceneBase || ''), { cache: 'no-store' })
+        .then(function (p) {
+          if (p && p.active > 0) { startAt = Date.now(); return; }   // 载荷仍在传输:顺延预算
+          if (p && p.served && Date.now() - startAt > budgetMs) { clearInterval(sceneWatchdog); wallpaperFailed(w, 'scene-no-frames'); }
+        }).catch(function () {});
       try {
         const win = iframe.contentWindow;
         const st = win && win.__wpStats;
         const frame = st && typeof st.frame === 'function' ? st.frame() : null;
+        // 渲染器以零尺寸初始化的修复:画布 1x1 时补发 resize 并重载渲染器,
+        // 强制 WebWallGL 按真实窗口尺寸重建画布并启动渲染循环(只补一次)
+        if (win && frame && frame.fps <= 0) {
+          const cv = win.document && win.document.querySelector('canvas');
+          if (cv && cv.width <= 1 && !win.__wpReinit) {
+            win.__wpReinit = true;
+            try { win.dispatchEvent(new Event('resize')); win.location.reload(); } catch (e) {}
+          }
+        }
         if (win && win.__wp && frame && frame.running && frame.fps > 0) {
           clearInterval(sceneWatchdog);
           recoveryAttempts = 0;
