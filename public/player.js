@@ -283,7 +283,9 @@
       propsKey = "";
       applyProps();
     };
+    previewLuminance(w);   // 切换瞬间:按预览图亮度立即翻转文字色(实测帧随后精修)
     $('hud-title').textContent = w.title;
+    document.title = w.title + ' · 动态壁纸';
     document.title = w.title + ' · 动态壁纸';
     if (w.playable && w.type === 'scene') mountScene(w);
     else if (w.playable && w.type === 'video') mountVideo(w);
@@ -291,6 +293,7 @@
     else if (w.playable && w.type === 'web' && w.webEntry) mountWeb(w);
     else mountFallback(w);
     if (layer) layer.style.zIndex = '1';
+    denseSampling();
     applyPaused();
   }
 
@@ -419,17 +422,28 @@
       var ctx = lumCanvas.getContext('2d');
       ctx.drawImage(img, 0, 0, 64, 36);
       var d = ctx.getImageData(0, 0, 64, 36).data;
-      var sum = 0;
-      for (var i = 0; i < d.length; i += 4) sum += 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2];
+      var sum = 0, opaque = 0;
+      for (var i = 0; i < d.length; i += 4) {
+        if (d[i + 3] > 0) opaque++;
+        sum += 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2];
+      }
+      if (opaque === 0) return;   // 全透明帧(未解码的空画布):不计,避免亮度被误判为纯黑
       reportLuminance(sum / (d.length / 4) / 255);
     } catch (e) {}
   }
   function sampleLuminance() {
     try {
       if (!layer || state.paused) return;
-      if (layer.tagName === 'VIDEO' && layer.videoWidth) { luminanceFromImage(layer); return; }
+      if (layer.tagName === 'VIDEO') {
+        if (layer.readyState >= 2) luminanceFromImage(layer);   // 未出首帧不采样(空画布=假黑)
+        return;
+      }
       if (layer.tagName === 'IFRAME') {
-        var wp = layer.contentWindow && layer.contentWindow.__wp;
+        var win = layer.contentWindow;
+        var st = win && win.__wpStats;
+        var fr = st && typeof st.frame === 'function' ? st.frame() : null;
+        if (!fr || !fr.running || fr.fps <= 0) return;   // 场景未出帧不采样
+        var wp = win.__wp;
         if (wp && typeof wp.capture === 'function') {
           var url = wp.capture();
           if (url) { var im = new Image(); im.onload = function () { luminanceFromImage(im); }; im.src = url; }
@@ -438,6 +452,22 @@
     } catch (e) {}
   }
   setInterval(sampleLuminance, 5000);
+  // 预览图采样:切换瞬间即时给出正确亮度(实时帧采样随后精修)
+  let lastPreviewId = null;
+  function previewLuminance(w) {
+    try {
+      if (!w || !w.preview || lastPreviewId === w.id) return;
+      lastPreviewId = w.id;
+      const im = new Image();
+      im.onload = function () { luminanceFromImage(im); };
+      im.src = w.preview;
+    } catch (e) {}
+  }
+  // 切换后 8s 内每 1s 加密采样(新壁纸首帧亮度可能渐变),之后回到 5s
+  function denseSampling() {
+    let n = 0;
+    const iv = setInterval(function () { sampleLuminance(); if (++n >= 8) clearInterval(iv); }, 1000);
+  }
 
   // ── Now Playing + 在线歌词跑马灯(lrclib.net,与 DSH 同源;默认关闭)───────
   let lyricsBox = null;
