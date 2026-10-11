@@ -161,7 +161,23 @@
         iframeDisplay: f ? getComputedStyle(f).display : null,
         iframeRect: f ? (function (r) { return Math.round(r.width) + 'x' + Math.round(r.height); })(f.getBoundingClientRect()) : null,
         bigSurfaces: [],
-        bottomSurfaces: (function () {
+        // 壁纸层实况:聊天窗口里挂载的壁纸(类型/透明度/播放进度)
+        wallpaper: (function () {
+          try {
+            var f = document.getElementById("we-wp-layer");
+            if (!f || !f.contentWindow) return { has: false };
+            var w = f.contentWindow;
+            var v = w.document.querySelector("#stage video");
+            var fr = f.contentDocument.querySelector("#stage iframe");
+            var im = f.contentDocument.querySelector("#stage img");
+            var out = { has: true, layers: [] };
+            if (v) out.layers.push("video ready=" + v.readyState + " " + (v.paused ? "paused" : "playing") + " t=" + Math.round(v.currentTime * 10) / 10);
+            if (fr) out.layers.push("iframe(scene) " + (function () { try { var s = fr.contentWindow.__wpStats; return s && s.frame ? "fps=" + Math.round(s.frame().fps) : "?"; } catch (e) { return "cross"; } })());
+            if (im) out.layers.push("img");
+            if (!out.layers.length) out.layers.push("(empty)");
+            return out;
+          } catch (e) { return { err: String(e).slice(0, 80) }; }
+        })(),        bottomSurfaces: (function () {
           try {
             var out = [];
             var els = document.body ? document.body.querySelectorAll("*") : [];
