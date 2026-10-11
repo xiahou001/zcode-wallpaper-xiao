@@ -494,14 +494,22 @@ function serveFile(abs, req, res, { cache = 'no-store' } = {}) {
     headers['Accept-Ranges'] = 'bytes';
     res.writeHead(206, headers);
     if (req.method === 'HEAD') { res.end(); return; }
-    fs.createReadStream(abs, { start, end }).pipe(res);
+    const rs206 = fs.createReadStream(abs, { start, end });
+    rs206.on('error', () => { try { res.destroy(); } catch (e2) {} });
+    res.on('error', () => { try { rs206.destroy(); } catch (e2) {} });
+    res.on('close', () => { if (!res.writableEnded) rs206.destroy(); });   // 客户端中断:停止读盘
+    rs206.pipe(res);
     return;
   }
   headers['Content-Length'] = st.size;
   headers['Accept-Ranges'] = 'bytes';
   res.writeHead(200, headers);
   if (req.method === 'HEAD') { res.end(); return; }
-  fs.createReadStream(abs).pipe(res);
+  const rs200 = fs.createReadStream(abs);
+  rs200.on('error', () => { try { res.destroy(); } catch (e2) {} });
+  res.on('error', () => { try { rs200.destroy(); } catch (e2) {} });
+  res.on('close', () => { if (!res.writableEnded) rs200.destroy(); });   // 客户端中断:停止读盘
+  rs200.pipe(res);
 }
 
 /** 目录围栏:abs 必须落在 fence 内。 */
@@ -1135,6 +1143,10 @@ ${a.cursor ? '#root { cursor: ' + a.cursor + ' !important; }' : ''}
   }
 });
 
+server.on('error', (e) => {
+  console.error('[we-wallpaper] 服务器错误: ' + ((e && e.code) || e.message));
+  if (e && e.code === 'EADDRINUSE') console.error('[we-wallpaper] 端口被占用:已有实例在运行,本实例退出。');
+});
 server.listen(PORT, '127.0.0.1', () => {
   const playable = inventory.filter((w) => w.playable).length;
   console.log(`[we-wallpaper] http://127.0.0.1:${PORT}  壁纸 ${inventory.length} 个(可播放 ${playable})`);
