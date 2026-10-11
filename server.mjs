@@ -542,6 +542,43 @@ function scheduleRotation() {
 
 // ── 服务器 ───────────────────────────────────────────────────────────────────
 const REQLOG = [];
+// ── 注入再同步(每小时):ZCode 更新替换 asar 后,自动恢复注入并清理过期影子目录 ──
+const ZCODE_DIR = process.env.ZCODE_DIR || path.join(process.env.LOCALAPPDATA || '', 'Programs', 'ZCode');
+const ZCODE_SHADOW = path.join(ZCODE_DIR, 'resources', 'app');
+function zcodeRunning() {
+  try {
+    const out = spawnSync('tasklist', ['/FI', 'IMAGENAME eq ZCode.exe'], { encoding: 'utf8', timeout: 10000 });
+    return /ZCode\.exe/i.test(out.stdout || '');
+  } catch { return true; }
+}
+function asarSlotPatched() {
+  try {
+    const fd = fs.openSync(path.join(ZCODE_DIR, 'resources', 'app.asar'), 'r');
+    const probe = Buffer.alloc(64);
+    fs.readSync(fd, probe, 0, 64, 0);
+    const js = probe.readUInt32LE(12);
+    const jb = Buffer.alloc(js);
+    fs.readSync(fd, jb, 0, js, 16);
+    const h = JSON.parse(jb.toString('utf8'));
+    const ds = 8 + probe.readUInt32LE(4);
+    let n = { files: h.files };
+    for (const q of ['out', 'renderer', 'index.html']) n = n.files[q];
+    const b = Buffer.alloc(Math.min(n.size, 8192));
+    fs.readSync(fd, b, 0, b.length, ds + Number(n.offset));
+    fs.closeSync(fd);
+    return b.toString('utf8').includes('bootstrap.js');
+  } catch { return true; }   // 读不了按已处理,避免误判
+}
+let lastResyncAt = 0;
+setInterval(function () {
+  if (Date.now() - lastResyncAt < 55 * 60 * 1000) return;
+  lastResyncAt = Date.now();
+  if (zcodeRunning()) return;                       // ZCode 运行中不动它的文件
+  const needShadow = fs.existsSync(ZCODE_SHADOW);
+  if (needShadow || !asarSlotPatched()) {
+    try { spawnSync(process.execPath, [path.join(__dirname, 'tools', 'resync-injection.js')], { stdio: 'ignore', timeout: 120000 }); } catch {}
+  }
+}, 10 * 60 * 1000).unref();
 const reqlog = (line) => { REQLOG.push(new Date().toISOString().slice(11, 23) + ' ' + line); if (REQLOG.length > 200) REQLOG.shift(); };
 const server = http.createServer(async (req, res) => {
   const u = new URL(req.url || '/', 'http://x');

@@ -1,5 +1,7 @@
 ' Wallpaper-only startup watchdog.
 ' This script never launches ZCode or zcode-host.
+' 登录流程:① 注入再同步(asar 补丁 + 影子目录清理,ZCode 更新后自动恢复注入)
+'          ② 壁纸服务器拉起 + 每 5 秒看护
 Dim fso, shell, projectDir, nodeExe, command
 Set fso = CreateObject("Scripting.FileSystemObject")
 Set shell = CreateObject("WScript.Shell")
@@ -20,6 +22,10 @@ Function ServerReady()
   Err.Clear
   On Error GoTo 0
 End Function
+' ① 注入再同步(ZCode 更新会替换 asar 使注入失效;此处自动重新补丁并清理影子目录)
+shell.CurrentDirectory = projectDir
+shell.Run Q(nodeExe) & " " & Q(projectDir & "\tools\resync-injection.js"), 0, True
+' ② 服务器看护
 shell.CurrentDirectory = projectDir
 Sub EnsureServer()
   If ServerReady() Then Exit Sub
