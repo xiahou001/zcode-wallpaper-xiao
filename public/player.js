@@ -28,6 +28,7 @@
   let recoveryAttempts = 0;
   let suppressRecoveryReset = false;
   let sceneWatchdog = 0;
+  let sceneReloadTries = {};
 
   const api = (path, body) => fetch(path, body ? {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
@@ -127,9 +128,11 @@
         // 强制 WebWallGL 按真实窗口尺寸重建画布并启动渲染循环(只补一次)
         if (win && frame && frame.fps <= 0) {
           const cv = win.document && win.document.querySelector('canvas');
-          if (cv && cv.width <= 1 && !win.__wpReinit) {
-            win.__wpReinit = true;
-            try { win.dispatchEvent(new Event('resize')); win.location.reload(); } catch (e) {}
+          if (cv && cv.width <= 1) {
+            try { win.dispatchEvent(new Event('resize')); } catch (e) {}
+            sceneReloadTries[w.id] = (sceneReloadTries[w.id] || 0) + 1;
+            if (sceneReloadTries[w.id] > 2) { clearInterval(sceneWatchdog); wallpaperFailed(w, 'scene-zero-size-loop'); return; }
+            try { win.location.reload(); } catch (e) {}
           }
         }
         if (win && win.__wp && frame && frame.running && frame.fps > 0) {
