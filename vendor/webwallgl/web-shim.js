@@ -25,7 +25,22 @@
  */
 (function (w) {
   "use strict";
-  // 幂等：同一文档只装一套。宿主（如 dsh-wallpaper-engine 的 /scene-files）会把 shim
+  // ── 夺焦围栏:壁纸脚本调用 window.focus() / 元素 focus() 时吞掉 ——
+  //    网页壁纸不得夺走宿主聊天窗口的焦点(DSH 同款行为边界)。
+  //    元素的 preventScroll 语义保留:点击壁纸内部仍可定位,但不抬窗。
+  try {
+    var __origFocus = w.HTMLInputElement.prototype.focus;
+    var __noSteal = function (orig) {
+      return function () { try { w.parent.postMessage({ __we: 1, op: "focusSteal" }, "*"); } catch (_) {}
+        try { orig.apply(this, arguments); } catch (_) {} };
+    };
+    w.focus = function () { try { w.parent.postMessage({ __we: 1, op: "focusSteal" }, "*"); } catch (_) {} };
+    var HTMLEls = [w.HTMLInputElement, w.HTMLTextAreaElement, w.HTMLSelectElement, w.HTMLButtonElement, w.HTMLAnchorElement, w.HTMLElement];
+    for (var fi = 0; fi < HTMLEls.length; fi++) {
+      try { var pf = HTMLEls[fi].prototype.focus; if (pf) HTMLEls[fi].prototype.focus = __noSteal(pf); } catch (_) {}
+    }
+  } catch (_) {}
+    // 幂等：同一文档只装一套。宿主（如 dsh-wallpaper-engine 的 /scene-files）会把 shim
   // 直接注进 HTML，渲染页跨源改写时若判重失手再注一次，就会有两套 rAF 节流 / 指针桥 /
   // 音频泵叠加 —— 实测帧率上限被限两次（15fps → 7.5fps），观感「卡得不行」。
   // 宿主侧判重 + 这里守卫 = 双保险。
