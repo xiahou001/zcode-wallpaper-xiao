@@ -107,6 +107,7 @@ restore.cmd   rem 一键恢复原生界面
 | GET | `/api/diag-log` | 最近渲染和客户端诊断记录 |
 | GET | `/api/scene-progress?token=x` | Scene 资源传输状态 |
 | GET/POST | `/api/we-assets` | WE 素材目录状态 / 手动配置 `{dir|null}` |
+| GET | `/api/fonts` | 本机已装字体族名清单(10 分钟缓存) |
 | GET | `/api/local-assets[/local/…]` | WE 官方素材消费端点(引擎 localAssets 客户端契约) |
 | GET | `/scene-video/<id>` | Scene 内嵌 MP4 降级源 |
 | GET | `/web-live/<id>/<file>` | Web 壁纸载荷(HTML 自动注入 WE API shim) |
