@@ -37,6 +37,7 @@ const PORT = Number(process.env.WE_WP_PORT || 7396);
 const HOME = os.homedir();
 const APP_DIR = path.join(HOME, '.we-wallpaper');
 const STATE_FILE = path.join(APP_DIR, 'state.json');
+const AUTO_LAUNCH_FLAG = path.join(APP_DIR, 'autostart-zcode.flag');   // 存在=登录时看门狗带 CDP 端口启动 ZCode
 const VENDOR_DIR = path.join(__dirname, 'vendor', 'webwallgl');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const LIVE_PREFIX = '/wallpaper-engine/scene-live';
@@ -1046,6 +1047,25 @@ const server = http.createServer(async (req, res) => {
       try { isFile = fs.statSync(target).isFile(); } catch {}
       if (!isFile) { res.statusCode = 404; return res.end('no such asset'); }
       return serveFile(target, req, res, { cache: 'public, max-age=86400' });   // 本机只读素材,可长缓存
+    }
+
+    // ---- 开机自启 ZCode(可选,CDP 轨道的推荐启动方式)----
+    // 只写/删一个标记文件,实际启动由 Startup 看门狗 VBS 在登录时执行:
+    // 标记存在 → 服务器就绪后带 --remote-debugging-port=9333 启动 ZCode。
+    if (p === '/api/autostart-zcode' && method === 'GET') {
+      return sendJSON(res, 200, { enabled: fs.existsSync(AUTO_LAUNCH_FLAG) });
+    }
+    if (p === '/api/autostart-zcode' && method === 'POST') {
+      const body = JSON.parse((await readBody(req)) || '{}');
+      try {
+        if (body.enabled) {
+          fs.mkdirSync(APP_DIR, { recursive: true });
+          fs.writeFileSync(AUTO_LAUNCH_FLAG, 'see we-wallpaper.vbs\n');
+        } else if (fs.existsSync(AUTO_LAUNCH_FLAG)) {
+          fs.unlinkSync(AUTO_LAUNCH_FLAG);
+        }
+      } catch (e) {}
+      return sendJSON(res, 200, { enabled: fs.existsSync(AUTO_LAUNCH_FLAG) });
     }
 
     // ---- WE 素材目录配置(设置面):GET 状态 / POST {dir|null} 手动覆盖或回到自动 ----

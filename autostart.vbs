@@ -36,6 +36,16 @@ End Sub
 ' 1) 服务器立即拉起 + 看护循环
 tick = 0
 EnsureServer()
+' 1b) 可选:开机自动启动 ZCode(带 CDP 调试端口 = 壁纸注入的零改文件轨道)
+'     仅当标记文件存在时执行,每次登录一次;开关由工作台「注入状态」管理
+Dim zcodeLaunched, flagPath, zcodeExe
+zcodeLaunched = False
+flagPath = shell.ExpandEnvironmentStrings("%USERPROFILE%") & "\.we-wallpaper\autostart-zcode.flag"
+zcodeExe = shell.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\Programs\ZCode\ZCode.exe"
+If fso.FileExists(flagPath) And fso.FileExists(zcodeExe) Then
+  shell.Run Q(zcodeExe) & " --remote-debugging-port=9333", 1, False
+  zcodeLaunched = True
+End If
 ' 2) 修复一次(异步,不阻塞;repair.js 内部对 ZCode 运行中有保守跳过)
 shell.Run Q(nodeExe) & " " & Q(projectDir & "\tools\repair.js"), 0, False
 ' 3) 看护循环

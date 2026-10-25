@@ -602,6 +602,36 @@
       content.appendChild(waRow);
       content.appendChild(el('div', 'muted', '素材只从本机 WE 目录只读取用,不会复制;路径填错(缺 materials/ 子目录)会被拒绝。'));
 
+      content.appendChild(el('div', 'sec', '注入状态(双轨道)'));
+      var injLine = el('div', 'muted', '正在读取注入轨道状态…');
+      content.appendChild(injLine);
+      var injRow = el('div', 'row');
+      var autoZ = el('button', 'btn', '…');
+      autoZ.title = '开机登录时自动带 CDP 调试端口启动 ZCode(壁纸注入的零改文件轨道,应用更新免疫);不开启则只用 asar 补丁轨道';
+      autoZ.onclick = function () {
+        api('/api/autostart-zcode', { enabled: !autoZ.dataset.on }).then(function (r) {
+          autoZ.dataset.on = r.enabled ? '1' : '';
+          autoZ.classList.toggle('on', !!r.enabled);
+          autoZ.textContent = r.enabled ? '● 开机自动启动 ZCode(CDP)' : '○ 开机自动启动 ZCode(CDP)';
+        });
+      };
+      injRow.appendChild(autoZ);
+      content.appendChild(injRow);
+      api('/api/diag-log').then(function (d) {
+        var inj = d.inject || {};
+        var cdp = d.cdp || {};
+        var bits = [];
+        bits.push('fuse 完整性校验:' + (inj.fuseIntegrity === true ? '已开启(asar 轨道被安全闸拦下,请用 CDP 启动)' : inj.fuseIntegrity === false ? '未开启 ✓' : '未知'));
+        bits.push('asar 补丁:' + (inj.asarMarked === true ? '在位 ✓' : inj.asarMarked === false ? '丢失(看门狗 1 分钟内自动重打)' : '未知'));
+        bits.push('CDP 轨道:' + (cdp.attached && cdp.attached.length ? '已挂 ' + cdp.attached.length + ' 窗口 ✓' : '空转(未用 CDP 方式启动)'));
+        injLine.textContent = bits.join(' · ');
+      }).catch(function () { injLine.textContent = '状态不可用'; });
+      api('/api/autostart-zcode').then(function (r) {
+        autoZ.dataset.on = r.enabled ? '1' : '';
+        if (r.enabled) { autoZ.classList.add('on'); autoZ.textContent = '● 开机自动启动 ZCode(CDP)'; }
+        else autoZ.textContent = '○ 开机自动启动 ZCode(CDP)';
+      }).catch(function () { autoZ.textContent = '开关不可用'; });
+
       content.appendChild(el('div', 'sec', '维护'));
       var row2 = el('div', 'row');
       var scan = el('button', 'btn primary', '⟳ 重新扫描壁纸库');
