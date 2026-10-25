@@ -269,6 +269,25 @@
       content.appendChild(el('div', 'sec', '文字描边(对抗亮壁纸上的浅色字)'));
       slider(content, '描边强度', state.appearance.stroke, 0, 100, function (v) { state.appearance.stroke = v; api('/api/appearance', { stroke: v }); });
 
+      // ── 文字颜色(DSH 字体集 themeColors 思路:'' = 智能可读性自动)──
+      content.appendChild(el('div', 'sec', '文字颜色'));
+      var fcRow = el('div', 'row');
+      var fcManual = /^#[0-9a-f]{6}$/i.test(state.appearance.fontColor || '');
+      var fcInput = document.createElement('input');
+      fcInput.type = 'color';
+      fcInput.value = fcManual ? state.appearance.fontColor : '#eef1f6';
+      fcInput.title = '选一个颜色 = 全界面文字手动着色';
+      fcInput.style.cssText = 'width:34px;height:26px;padding:0;border:0;background:transparent;cursor:pointer;';
+      fcInput.oninput = function () { state.appearance.fontColor = fcInput.value; api('/api/appearance', { fontColor: fcInput.value }); };
+      fcInput.onchange = function () { api('/api/appearance', { fontColor: fcInput.value }).then(function (s) { state = s; render(); }); };
+      fcRow.appendChild(fcInput);
+      var fcAuto = el('button', 'btn' + (fcManual ? '' : ' on'), fcManual ? '手动颜色' : '● 自动(智能可读性)');
+      fcAuto.title = '回到按壁纸亮度自动翻转文字颜色';
+      fcAuto.onclick = function () { api('/api/appearance', { fontColor: '' }).then(function (s) { state = s; render(); }); };
+      fcRow.appendChild(fcAuto);
+      content.appendChild(fcRow);
+      content.appendChild(el('div', 'muted', '默认随壁纸亮度自动深浅翻转;选色后消息区和聊天框文字统一用该色(改动约 5 秒内生效),点「自动」恢复。'));
+
       content.appendChild(el('div', 'sec', '界面玻璃透明度(改动约 5 秒内自动应用到聊天窗口)'));
       slider(content, '主区背景', state.appearance.main, 0, 100, function (v) { state.appearance.main = v; api('/api/appearance', { main: v }); });
       slider(content, '行 / 面板', state.appearance.row, 0, 100, function (v) { state.appearance.row = v; api('/api/appearance', { row: v }); });

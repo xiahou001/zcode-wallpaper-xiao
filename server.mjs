@@ -885,6 +885,11 @@ const server = http.createServer(async (req, res) => {
         state.appearance.glassColor = String(body.glassColor).toLowerCase();
       }
       if (body.filter != null && WALLPAPER_FILTERS.includes(String(body.filter))) state.appearance.filter = String(body.filter);
+      // 文字颜色:'' = 回到智能可读性自动;非法色值静默忽略(不破坏现场)
+      if (body.fontColor != null) {
+        const fc = String(body.fontColor).trim();
+        state.appearance.fontColor = /^#[0-9a-f]{6}$/i.test(fc) ? fc.toLowerCase() : '';
+      }
       saveState();
       return sendJSON(res, 200, state);
     }
@@ -1100,7 +1105,10 @@ const server = http.createServer(async (req, res) => {
       const mainBase = lightWall ? '#ffffff' : '#14161c';
       const sideBase = lightWall ? '#f2f3f5' : '#0c0e12';
       const lightBase = lightWall ? '#f2f3f5' : '#14161c';
-      const fg = lightWall ? '#1b1e24' : '#eef1f6';
+      // 文字颜色:手动 fontColor(DSH 字体集 themeColors 思路)优先,空 = 智能可读性自动。
+      // 覆盖范围 = 消息区 fg 三档 + 聊天框内文字(glassFg),保证"改了就是全改"的可预期性;
+      // 选浅色文字配浅玻璃导致看不清是用户自己的选择,工作台一键回自动。
+      const fg = a.fontColor || (lightWall ? '#1b1e24' : '#eef1f6');
       // 聊天框玻璃颜色(工作台"玻璃颜色"色板):由用户选择,按亮度自动决定框内文字深浅
       const hexLum = (hex) => {
         const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || ''));
@@ -1110,7 +1118,7 @@ const server = http.createServer(async (req, res) => {
       };
       const glassBase = a.glassColor || lightBase;
       const glassLight = hexLum(glassBase) > 0.55;              // 玻璃本身偏亮?
-      const glassFg = glassLight ? '#1b1e24' : '#eef1f6';
+      const glassFg = a.fontColor || (glassLight ? '#1b1e24' : '#eef1f6');
       const shadow = Math.round(a.stroke * 0.5) / 100;
       const css = `
 @property --blindp { syntax: '<percentage>'; inherits: false; initial-value: 0%; }
