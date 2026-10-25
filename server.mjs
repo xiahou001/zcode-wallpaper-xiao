@@ -503,7 +503,7 @@ function faststartVariant(abs, id) {
 // 先做一遍 moov 前置(无损 -c copy),下次轮换到它们时元数据立即可得,切换不再
 // 等整个文件顺流读完。顺序=列表优先,串行执行不与播放抢磁盘,最多 12 张。
 async function warmFaststartOnBoot() {
-  await new Promise((r) => setTimeout(r, 2500));   // 先让服务器与播放链路就绪
+  await new Promise((r) => setTimeout(r, 10000));   // 错开登录高峰:ZCode 启动那几秒别抢磁盘
   const orderedIds = [];
   const pl = state.playlists.find((x) => x.name === state.rotate.playlist);
   if (pl && Array.isArray(pl.ids)) orderedIds.push(...pl.ids);
@@ -752,31 +752,41 @@ function systemFonts() {
 
 // ── 注入轨道状态(fuse + asar 标记;5 分钟缓存,诊断一眼看清双轨健康度)──
 // (ZCODE_DIR 已在前文声明,此处直接复用)
+// fuse 扫描是 ~200MB 的读:同步版会冻结事件循环上百 ms~秒级(慢盘更甚),
+// bootstrap.js 的请求在窗口期排队 → 注入加载器若是 defer 就会拖住 ZCode
+// 首屏 —— 所以这里必须异步分块(每块之间让出事件循环)。
 const INJECT_STATUS_TTL = 5 * 60_000;
+const fsp = fs.promises;
 let injectStatusCache = { at: 0, data: null };
-function readFuseIntegrity() {
+let injectStatusBusy = false;
+async function readFuseIntegrity() {
+  let fh;
   try {
     const exe = path.join(ZCODE_DIR, 'ZCode.exe');
-    const est = fs.statSync(exe);
+    const est = await fsp.stat(exe);
     const SENT = Buffer.from('dL7pKGdnNz796PbbjQWNKmHXBZaB9tsX');
     const CH = 4 * 1024 * 1024;
-    const efd = fs.openSync(exe, 'r');
+    fh = await fsp.open(exe, 'r');
     const buf = Buffer.alloc(CH + SENT.length);
     let pos = 0, found = -1;
     while (pos < est.size && found < 0) {
-      const n = fs.readSync(efd, buf, 0, Math.min(buf.length, est.size - pos), pos);
-      if (n <= 0) break;
-      const i = buf.slice(0, n).indexOf(SENT);
+      const { bytesRead } = await fh.read(buf, 0, Math.min(buf.length, est.size - pos), pos);
+      if (bytesRead <= 0) break;
+      const i = buf.slice(0, bytesRead).indexOf(SENT);
       if (i >= 0) { found = pos + i; break; }
       pos += CH - SENT.length;
     }
-    if (found < 0) { fs.closeSync(efd); return false; }   // 老 Electron 无 fuse
+    if (found < 0) { await fh.close(); return false; }   // 老 Electron 无 fuse
     const tail = Buffer.alloc(48);
-    fs.readSync(efd, tail, 0, 48, found + SENT.length);
-    fs.closeSync(efd);
+    await fh.read(tail, 0, 48, found + SENT.length);
+    await fh.close();
+    fh = null;
     const b = tail[2 + 4];   // fuse[4] = EnableEmbeddedAsarIntegrityValidation
     return b === 1 || b === 0x31;
-  } catch { return null; }
+  } catch {
+    try { if (fh) await fh.close(); } catch (e2) {}
+    return null;
+  }
 }
 function asarMarked() {
   try {
@@ -799,11 +809,17 @@ function asarMarked() {
   } catch { return null; }   // 读不到(更新中/权限)→ 未知
 }
 function injectStatus() {
+  // 同步回缓存;过期则后台异步刷新(fuse 扫描不再阻塞请求)
   if (Date.now() - injectStatusCache.at < INJECT_STATUS_TTL) return injectStatusCache.data;
-  injectStatusCache = { at: Date.now(), data: { fuseIntegrity: readFuseIntegrity(), asarMarked: asarMarked(), cdp: cdpInjector ? cdpInjector.status() : null } };
-  return injectStatusCache.data;
+  if (!injectStatusBusy) {
+    injectStatusBusy = true;
+    Promise.resolve(readFuseIntegrity()).then((fuse) => {
+      injectStatusCache = { at: Date.now(), data: { fuseIntegrity: fuse, asarMarked: asarMarked(), cdp: cdpInjector ? cdpInjector.status() : null } };
+    }).catch(() => {}).then(() => { injectStatusBusy = false; });
+  }
+  return injectStatusCache.data || { fuseIntegrity: null, asarMarked: null, cdp: null };
 }
-setTimeout(() => injectStatus(), 4000).unref?.();   // 开机先暖一次缓存
+setTimeout(() => injectStatus(), 15000).unref?.();   // 登录高峰(前 15s)过后再暖缓存
 
 const server = http.createServer(async (req, res) => {
   const u = new URL(req.url || '/', 'http://x');

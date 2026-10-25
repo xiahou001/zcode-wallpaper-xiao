@@ -108,13 +108,14 @@ if (needBackup) {
   console.log('原生 index.html 已备份: ' + genFile + ' (' + pristineBuf.length + ' 字节)');
 }
 
-// 已是目标形态(只有 defer 脚本、没有渲染阻塞的 7396 link)才允许早退;
-// 带 link 的旧形态要继续走重补丁,升级成 script-only。
+// 已是目标形态(async 脚本、无渲染阻塞 link)才允许早退;
+// defer 旧形态要继续走重补丁升级为 async(defer 会阻塞 DOMContentLoaded,
+// 服务器忙时拖住 ZCode 首屏 —— 正是「有时候打不开 ZCode」的注入侧成因)。
 const { buildLoader, hasAnchor } = require('./build-zcode-loader');
-const hasBootstrapScript = orig.includes('bootstrap.js');
+const hasAsyncLoader = /<script[^>]*7396\/(?:embed|bootstrap)\.js[^>]*\basync\b[^>]*><\/script>/.test(orig);
 const hasBlockingLink = /<link[^>]*127\.0\.0\.1:7396/.test(orig);
-if (hasBootstrapScript && !hasBlockingLink) { console.log('ALREADY PATCHED IN ASAR (script-only loader)'); process.exit(0); }
-if (hasBlockingLink) console.log('检测到旧形态注入(渲染阻塞 link),升级为 script-only…');
+if (hasAsyncLoader && !hasBlockingLink) { console.log('ALREADY PATCHED IN ASAR (async loader)'); process.exit(0); }
+if (!hasAsyncLoader && orig.includes('bootstrap.js')) console.log('检测到旧形态注入(defer),升级为 async…');
 // 锚点闸门放宽:未来 ZCode 改掉 <title>ZCode</title> 文案时,只要还有
 // </head> / <body / <meta 任一锚点就继续打(hasAnchor 四层冗余)。
 if (!hasAnchor(orig)) { console.error('UNEXPECTED CONTENT: 找不到任何注入锚点(title/head/body/meta),拒绝盲写'); process.exit(1); }
@@ -131,7 +132,27 @@ console.log('loader variant=' + built.variant + ' bytes=' + body.length + '/' + 
 const out = Buffer.alloc(SIZE, 0x20); // 空格补齐
 body.copy(out);
 
-// ── 写入(处理 ZCode 正在运行时的占用)──
+// ── 更新器稳定性闸:写 asar 前确认文件不在被写入中 ──
+// ZCode 更新器替换 asar 需要数秒;若补丁恰好在这窗口写入(先读的头、后写的槽),
+// 交错写入会损坏 asar → 更新后客户端打不开。三重判据任一命中即中止,看门狗
+// 下一轮再来 —— 慢一步补丁无害,写坏一个 asar 是灾难。
+(function stabilityGate() {
+  try {
+    // ① 槽位内容复读:与最初读取一致(读取间隙没被别人写过)
+    const cur = Buffer.alloc(SIZE);
+    const fd2 = fs.openSync(ASAR, 'r');
+    fs.readSync(fd2, cur, 0, SIZE, OFF);
+    fs.closeSync(fd2);
+    if (cur.toString('utf8') !== orig) { console.log('stability gate: 槽位在读取间隙被外部修改,中止'); process.exit(1); }
+    // ② 150ms 时间窗内 size/mtime 稳定(没人在持续写)
+    const s1 = fs.statSync(ASAR);
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 150);
+    const s2 = fs.statSync(ASAR);
+    if (s1.size !== s2.size || s1.mtimeMs !== s2.mtimeMs) { console.log('stability gate: asar 正在被写入(疑似更新中),中止补丁'); process.exit(1); }
+  } catch (e) { console.log('stability gate: ' + (e && e.message)); process.exit(1); }
+})();
+fs.closeSync(fd);   // 释放最初那个只读句柄
+
 let wfd;
 try {
   wfd = fs.openSync(ASAR, 'r+'); // 只读 fd 不能写,另开读写句柄

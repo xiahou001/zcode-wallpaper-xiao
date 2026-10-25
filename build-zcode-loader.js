@@ -10,14 +10,14 @@
 //   hard  : 额外移除 <meta>/<link rel=icon> 等非关键头部标签(最后手段)
 // 都放不下则返回 null,由调用方提示改用影子目录方案。
 //
-// ⚠ 加载器一律只用 defer 脚本,严禁 <link rel=stylesheet>:指向本地壁纸服务器的
-// 样式表是渲染阻塞资源,服务器重启窗口期一旦「连接成功但不响应」,整个 ZCode
-// 首绘会被挂起(症状即"内容和模型加载不出来")。样式由 embed.js 动态注入,
-// 完全不依赖 link 标签。
+// ⚠ 加载器一律只用 async 脚本(async≠defer:async 完全不阻塞页面解析,
+// defer 会卡 DOMContentLoaded —— 服务器启动期/忙时响应慢几秒,ZCode 就
+// 表现为"打不开/白屏",这正是本档位曾用 defer 引发过的真实故障)。
+// 样式由 embed.js 动态注入,不依赖任何 link 标签。
 const INJECT_FULL =
-  '<script src="http://127.0.0.1:7396/bootstrap.js?v=3" defer></script>';
+  '<script src="http://127.0.0.1:7396/bootstrap.js?v=4" async></script>';
 const INJECT_LITE =
-  '<script src="http://127.0.0.1:7396/bootstrap.js" defer></script>';
+  '<script src="http://127.0.0.1:7396/bootstrap.js" async></script>';
 const INJECT_TINY = INJECT_LITE;
 const ANCHOR = '<title>ZCode</title>';
 
@@ -66,7 +66,7 @@ function hasAnchor(html) {
   return html.indexOf(ANCHOR) >= 0 || html.indexOf('</head>') >= 0 || html.indexOf('<body') >= 0 || html.indexOf('<meta') >= 0;
 }
 
-// 已注入时的替换:允许版本参数/协议/引号形式有差异
+// 已注入时的替换:允许版本参数/协议/引号/defer↔async 形态差异
 const LOADER_RE = /<link[^>]*7396\/embed\.css[^>]*>\s*<script[^>]*7396\/(?:embed|bootstrap)\.js[^>]*><\/script>/g;
 const SINGLE_RE = /<script[^>]*7396\/(?:embed|bootstrap)\.js[^>]*><\/script>/g;
 
