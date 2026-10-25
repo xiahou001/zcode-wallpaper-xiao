@@ -885,10 +885,13 @@ const server = http.createServer(async (req, res) => {
         state.appearance.glassColor = String(body.glassColor).toLowerCase();
       }
       if (body.filter != null && WALLPAPER_FILTERS.includes(String(body.filter))) state.appearance.filter = String(body.filter);
-      // 文字颜色:'' = 回到智能可读性自动;非法色值静默忽略(不破坏现场)
-      if (body.fontColor != null) {
-        const fc = String(body.fontColor).trim();
-        state.appearance.fontColor = /^#[0-9a-f]{6}$/i.test(fc) ? fc.toLowerCase() : '';
+      // 文字颜色:'' = 回到智能可读性自动;非法色值回自动(不残留异常色)。
+      // 分区:fontColor=主区+全局基线,fontColorSidebar=侧栏(空=跟随主区),fontColorComposer=聊天框(空=玻璃对比自动)
+      for (const key of ['fontColor', 'fontColorSidebar', 'fontColorComposer']) {
+        if (body[key] != null) {
+          const fc = String(body[key]).trim();
+          state.appearance[key] = /^#[0-9a-f]{6}$/i.test(fc) ? fc.toLowerCase() : '';
+        }
       }
       saveState();
       return sendJSON(res, 200, state);
@@ -1109,6 +1112,7 @@ const server = http.createServer(async (req, res) => {
       // 覆盖范围 = 消息区 fg 三档 + 聊天框内文字(glassFg),保证"改了就是全改"的可预期性;
       // 选浅色文字配浅玻璃导致看不清是用户自己的选择,工作台一键回自动。
       const fg = a.fontColor || (lightWall ? '#1b1e24' : '#eef1f6');
+      const fgSide = a.fontColorSidebar || fg;   // 侧栏文字:空 = 跟随主区
       // 聊天框玻璃颜色(工作台"玻璃颜色"色板):由用户选择,按亮度自动决定框内文字深浅
       const hexLum = (hex) => {
         const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || ''));
@@ -1118,7 +1122,8 @@ const server = http.createServer(async (req, res) => {
       };
       const glassBase = a.glassColor || lightBase;
       const glassLight = hexLum(glassBase) > 0.55;              // 玻璃本身偏亮?
-      const glassFg = a.fontColor || (glassLight ? '#1b1e24' : '#eef1f6');
+      // 聊天框文字:fontColorComposer 空 = 按玻璃明暗自动(聊天框底色是玻璃,与主区亮度无关)
+      const glassFg = a.fontColorComposer || (glassLight ? '#1b1e24' : '#eef1f6');
       const shadow = Math.round(a.stroke * 0.5) / 100;
       const css = `
 @property --blindp { syntax: '<percentage>'; inherits: false; initial-value: 0%; }
@@ -1143,6 +1148,21 @@ ${a.cursor ? '#root { cursor: ' + a.cursor + ' !important; }' : ''}
   --color-input-border: ${glassLight ? 'rgba(0,0,0,.14)' : 'rgba(255,255,255,.18)'} !important;
 }
 .dark { --color-surface: ${glassDark(lightWall ? '#1b1e24' : '#ffffff', Math.round(a.row / 5))} !important; }
+/* 分区文字色(每块区域独立):全局 fg 是主区/基线;
+   侧栏按 shadcn sidebar 家族容器作用域覆盖(排除 sidebar-inset —— 那是主区内容);
+   自定义属性随子树继承,改容器一处即全侧栏生效;不存在的 token 会被安全忽略。 */
+[data-slot^="sidebar"]:not([data-slot="sidebar-inset"]) {
+  --color-foreground: ${fgSide} !important;
+  --color-foreground-subtle: ${fgSide}b8 !important;
+  --color-foreground-subtlest: ${fgSide}80 !important;
+  --color-muted-foreground: ${fgSide}99 !important;
+  --color-accent-foreground: ${fgSide} !important;
+}
+[data-slot="sidebar-inset"] {
+  --color-foreground: ${fg} !important;
+  --color-foreground-subtle: ${fg}b8 !important;
+  --color-foreground-subtlest: ${fg}80 !important;
+}
 /* 聊天输入框:磨砂玻璃。
    DOM 实证(embed.js 的输入框抓取探针上报的真实元素链):
      .chat-composer-input-surface              ← 外层(785x107),应保持透明

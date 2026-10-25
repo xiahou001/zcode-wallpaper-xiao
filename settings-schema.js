@@ -4,7 +4,7 @@ export const DEFAULTS = {
   currentId: null, paused: false, volume: 1,
   rotate: { enabled: false, intervalMin: 30, playlist: null },
   transition: { kind: 'crossfade', ms: 1800 },
-  appearance: { main: 0, row: 52, sidebar: 55, brightness: 100, stroke: 35, zoom: 100, blur: 22, glass: 50, glassColor: '#14161c', fontFamily: '', cursor: '', filter: 'none', fontColor: '' },
+  appearance: { main: 0, row: 52, sidebar: 55, brightness: 100, stroke: 35, zoom: 100, blur: 22, glass: 50, glassColor: '#14161c', fontFamily: '', cursor: '', filter: 'none', fontColor: '', fontColorSidebar: '', fontColorComposer: '' },
   readability: { auto: true }, occlusion: 'hidden', sceneFps: 30, videoFpsCap: 0, playlists: [], workshopDirs: [],
   lyrics: false,        // 在线歌词跑马灯(默认关闭,与 DSH 一致)
   contentFilter: false, // 内容分级过滤:隐藏 R 级壁纸(DSH 功能)
@@ -35,8 +35,15 @@ export function sanitizeState(input = {}) {
   // 壁纸滤镜(源自 dsh-wallpaper-engine 的效果白名单,场景/视频/图片层通用)
   s.appearance.filter = WALLPAPER_FILTERS.includes(s.appearance.filter) ? s.appearance.filter : 'none';
   // 文字颜色:'' = 智能可读性自动(按壁纸亮度翻转);'#rrggbb' = 手动覆盖(DSH 字体集 themeColors 思路)
+  // 分区独立配色:sidebar(侧栏)空 = 跟随主区色;composer(聊天框)空 = 玻璃对比自动
   s.appearance.fontColor = /^#[0-9a-f]{6}$/i.test(String(s.appearance.fontColor || ''))
     ? String(s.appearance.fontColor).toLowerCase()
+    : '';
+  s.appearance.fontColorSidebar = /^#[0-9a-f]{6}$/i.test(String(s.appearance.fontColorSidebar || ''))
+    ? String(s.appearance.fontColorSidebar).toLowerCase()
+    : '';
+  s.appearance.fontColorComposer = /^#[0-9a-f]{6}$/i.test(String(s.appearance.fontColorComposer || ''))
+    ? String(s.appearance.fontColorComposer).toLowerCase()
     : '';
   // 自定义外观预设:只保留名字与外观快照,上限 12 个(防状态文件无限膨胀)
   s.appearancePresets = Array.isArray(input.appearancePresets)

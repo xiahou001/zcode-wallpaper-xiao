@@ -269,24 +269,31 @@
       content.appendChild(el('div', 'sec', '文字描边(对抗亮壁纸上的浅色字)'));
       slider(content, '描边强度', state.appearance.stroke, 0, 100, function (v) { state.appearance.stroke = v; api('/api/appearance', { stroke: v }); });
 
-      // ── 文字颜色(DSH 字体集 themeColors 思路:'' = 智能可读性自动)──
-      content.appendChild(el('div', 'sec', '文字颜色'));
-      var fcRow = el('div', 'row');
-      var fcManual = /^#[0-9a-f]{6}$/i.test(state.appearance.fontColor || '');
-      var fcInput = document.createElement('input');
-      fcInput.type = 'color';
-      fcInput.value = fcManual ? state.appearance.fontColor : '#eef1f6';
-      fcInput.title = '选一个颜色 = 全界面文字手动着色';
-      fcInput.style.cssText = 'width:34px;height:26px;padding:0;border:0;background:transparent;cursor:pointer;';
-      fcInput.oninput = function () { state.appearance.fontColor = fcInput.value; api('/api/appearance', { fontColor: fcInput.value }); };
-      fcInput.onchange = function () { api('/api/appearance', { fontColor: fcInput.value }).then(function (s) { state = s; render(); }); };
-      fcRow.appendChild(fcInput);
-      var fcAuto = el('button', 'btn' + (fcManual ? '' : ' on'), fcManual ? '手动颜色' : '● 自动(智能可读性)');
-      fcAuto.title = '回到按壁纸亮度自动翻转文字颜色';
-      fcAuto.onclick = function () { api('/api/appearance', { fontColor: '' }).then(function (s) { state = s; render(); }); };
-      fcRow.appendChild(fcAuto);
-      content.appendChild(fcRow);
-      content.appendChild(el('div', 'muted', '默认随壁纸亮度自动深浅翻转;选色后消息区和聊天框文字统一用该色(改动约 5 秒内生效),点「自动」恢复。'));
+      // ── 文字颜色:主区 / 侧栏 / 聊天框分区独立(DSH 字体集 themeColors 思路)──
+      content.appendChild(el('div', 'sec', '文字颜色(分区独立)'));
+      function fcObj(k, v) { var o = {}; o[k] = v; return o; }
+      function fcZoneRow(label, key, autoLabel, autoTitle) {
+        var row = el('div', 'row');
+        row.appendChild(el('label', null, label));
+        var manual = /^#[0-9a-f]{6}$/i.test(state.appearance[key] || '');
+        var inp = document.createElement('input');
+        inp.type = 'color';
+        inp.value = manual ? state.appearance[key] : '#eef1f6';
+        inp.title = '选一个颜色 = ' + label + '手动着色';
+        inp.style.cssText = 'width:34px;height:26px;padding:0;border:0;background:transparent;cursor:pointer;';
+        inp.oninput = function () { state.appearance[key] = inp.value; api('/api/appearance', fcObj(key, inp.value)); };
+        inp.onchange = function () { api('/api/appearance', fcObj(key, inp.value)).then(function (s) { state = s; render(); }); };
+        row.appendChild(inp);
+        var auto = el('button', 'btn' + (manual ? '' : ' on'), manual ? '手动' : autoLabel);
+        auto.title = autoTitle;
+        auto.onclick = function () { api('/api/appearance', fcObj(key, '')).then(function (s) { state = s; render(); }); };
+        row.appendChild(auto);
+        content.appendChild(row);
+      }
+      fcZoneRow('主区(消息列表)', 'fontColor', '● 自动(随壁纸亮度)', '按壁纸亮度自动深浅翻转');
+      fcZoneRow('侧栏', 'fontColorSidebar', '● 跟随主区', '与主区文字同色');
+      fcZoneRow('聊天框', 'fontColorComposer', '● 玻璃对比自动', '按玻璃颜色明暗自动深浅');
+      content.appendChild(el('div', 'muted', '每区独立配色:主区默认随壁纸亮度翻转,侧栏默认跟随主区,聊天框默认按玻璃明暗自动;选色即手动,点自动恢复。改动约 5 秒内生效。'));
 
       content.appendChild(el('div', 'sec', '界面玻璃透明度(改动约 5 秒内自动应用到聊天窗口)'));
       slider(content, '主区背景', state.appearance.main, 0, 100, function (v) { state.appearance.main = v; api('/api/appearance', { main: v }); });

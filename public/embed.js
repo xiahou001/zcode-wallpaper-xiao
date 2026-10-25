@@ -206,6 +206,18 @@
           } catch (e) { return { err: String(e).slice(0, 80) }; }
         })(),
         slots: [],
+        // 分区探针:分区文字色的选择器是否命中(shadcn sidebar 家族/主区/聊天框)
+        zones: (function () {
+          try {
+            var q = function (s) { return document.querySelectorAll(s).length; };
+            return {
+              sidebar: q('[data-slot^="sidebar"]:not([data-slot="sidebar-inset"])'),
+              sidebarInset: q('[data-slot="sidebar-inset"]'),
+              composer: q('.chat-composer-input-surface'),
+              rootFg: (getComputedStyle(document.documentElement).getPropertyValue('--color-foreground') || '').trim() || null,
+            };
+          } catch (e) { return { err: String(e).slice(0, 60) }; }
+        })(),
       };
       // 磨砂玻璃探针:报告输入框 computed 样式,并找出会阻断 backdrop-filter 的祖先
       info.composer = (function () {
