@@ -35,12 +35,25 @@ const origBuf = Buffer.alloc(SIZE);
 fs.readSync(fd, origBuf, 0, SIZE, OFF);
 const orig = origBuf.toString('utf8');
 
-// ── 备份:只在首次补丁时保存原始字节(含 slot 元数据)──
+// ── 备份:按 asar 身份(大小+槽位)保存原始字节;ZCode 更新后自动滚动备份 ──
+// 旧逻辑只看 meta.json 是否存在就跳过备份,而 ZCode 更新会整体替换 app.asar,
+// 导致备份永远停在旧版本 —— 一旦新版本没备份就被补丁污染,再也回不到原生 index.html。
 const metaFile = path.join(BACKUP_DIR, 'meta.json');
-if (!fs.existsSync(metaFile)) {
+const asarSize = fs.statSync(ASAR).size;
+const genFile = path.join(BACKUP_DIR, 'index.html.' + asarSize + '.bin');
+let needBackup = true;
+if (fs.existsSync(metaFile) && fs.existsSync(genFile)) {
+  try {
+    const meta = JSON.parse(fs.readFileSync(metaFile, 'utf8'));
+    if (Number(meta.asarSize) === asarSize && Number(meta.slotOffset) === OFF && Number(meta.slotSize) === SIZE) {
+      needBackup = false;
+      console.log('备份已存在(asarSize=' + asarSize + '),跳过');
+    }
+  } catch (e) { /* meta 损坏则重新备份 */ }
+}
+if (needBackup) {
   fs.mkdirSync(BACKUP_DIR, { recursive: true });
-  fs.writeFileSync(path.join(BACKUP_DIR, 'index.html.bin'), pristineBuf);
-  // 若槽位已含注入(老安装迁移/重跑),先剥离注入标签再备份 —— 永远不把补丁字节当原生备份
+  // 若槽位已含注入(重复补丁),先剥离注入标签再备份 —— 永远不把补丁字节当原生备份
   let pristineBuf = origBuf;
   if (orig.includes('127.0.0.1:7396')) {
     const s = orig
@@ -49,29 +62,30 @@ if (!fs.existsSync(metaFile)) {
     pristineBuf = Buffer.from(s, 'utf8');
     console.log('槽位已含旧注入:备份已剥离注入标签(原生字节)');
   }
+  // 先写新代备份,再更新 meta,避免中途失败留下"有 meta 无备份"的状态
+  fs.writeFileSync(genFile, pristineBuf);
+  fs.writeFileSync(path.join(BACKUP_DIR, 'index.html.bin'), pristineBuf); // 兼容旧 restore 脚本
   fs.writeFileSync(metaFile, JSON.stringify({
     backedUpAt: new Date().toISOString(),
-    slotOffset: OFF, slotSize: SIZE, asarSize: fs.statSync(ASAR).size,
+    slotOffset: OFF, slotSize: SIZE, asarSize: asarSize,
+    backupFile: path.basename(genFile),
   }, null, 2));
-  console.log('原始 index.html 已备份到 ' + BACKUP_DIR);
-} else {
-  console.log('备份已存在,跳过');
+  console.log('原生 index.html 已备份: ' + genFile + ' (' + pristineBuf.length + ' 字节)');
 }
 
 if (orig.includes('embed.css') && orig.includes('bootstrap.js')) { console.log('ALREADY PATCHED IN ASAR'); process.exit(0); }
 if (!orig.includes('<title>ZCode</title>')) { console.error('UNEXPECTED CONTENT'); process.exit(1); }
 
-// 压缩原文件并 upgrade any previous loader to the retrying bootstrap.
-const compact = orig.replace(/^[ \t]+/gm, '').replace(/\n{2,}/g, '\n');
-const inject = '<link rel="stylesheet" href="http://127.0.0.1:7396/embed.css?v=2"/><script src="http://127.0.0.1:7396/bootstrap.js?v=2" defer></script>';
-const loader = /<link\s+rel="stylesheet"\s+href="http:\/\/127\.0\.0\.1:7396\/embed\.css[^"]*"\s*\/?><script\s+src="http:\/\/127\.0\.0\.1:7396\/(?:embed|bootstrap)\.js[^"]*"\s+defer><\/script>/g;
-const patched = loader.test(compact)
-  ? compact.replace(loader, inject)
-  : compact.includes('bootstrap.js')
-    ? compact
-    : compact.replace('<title>ZCode</title>', '<title>ZCode</title>' + inject);
-const body = Buffer.from(patched, 'utf8');
-if (body.length > SIZE) { console.error('DOES NOT FIT: need ' + body.length + ' > ' + SIZE); process.exit(1); }
+// 构造加载器:按槽位剩余空间自动分三级降级(见 build-zcode-loader.js)
+const { buildLoader } = require('./build-zcode-loader');
+const built = buildLoader(orig, SIZE);
+if (!built) {
+  console.error('DOES NOT FIT: 槽位 ' + SIZE + ' 字节连极简加载器都放不下。');
+  console.error('该 ZCode 版本的 index.html 过于紧凑,请改用影子目录方案(见 README)。');
+  process.exit(1);
+}
+const body = Buffer.from(built.text, 'utf8');
+console.log('loader variant=' + built.variant + ' bytes=' + body.length + '/' + SIZE);
 const out = Buffer.alloc(SIZE, 0x20); // 空格补齐
 body.copy(out);
 
@@ -99,6 +113,11 @@ const vfd = fs.openSync(ASAR, 'r');
 const vbuf = Buffer.alloc(SIZE);
 fs.readSync(vfd, vbuf, 0, SIZE, OFF);
 fs.closeSync(vfd);
-if (!vbuf.toString('utf8').includes('embed.css')) { console.error('READBACK MISMATCH!'); process.exit(1); }
+// 校验只认「加载器存在」:tiny/min 档位故意不含 embed.css(样式由 bootstrap.js 注入)
+const readback = vbuf.toString('utf8');
+if (readback.indexOf('7396/') < 0 || readback.indexOf('bootstrap.js') < 0) {
+  console.error('READBACK MISMATCH! 读回内容里没有加载器,asar 可能被占用或写入被拒。');
+  process.exit(1);
+}
 console.log('PATCHED IN PLACE: ' + body.length + '/' + SIZE + ' bytes used at offset ' + OFF + '(读回校验通过)');
 console.log('提示:ZCode 更新后注入会自然失效回原生(不报错),重新运行 apply 即可。');

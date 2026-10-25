@@ -635,6 +635,16 @@
     pollBusy = false;
   }
   setInterval(poll, 2000);
+  // 注入代码版本自检:服务器上的播放器代码更新后,壁纸层自刷新(用户无需操作)
+  if (EMBED) {
+    let myVersion = null;
+    setInterval(function () {
+      fetch('/api/version', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (v) {
+        if (myVersion === null) { myVersion = v.v; return; }
+        if (v.v !== myVersion) location.reload();   // 代码有更新:自刷新
+      }).catch(function () {});
+    }, 5000);
+  }
   let inventoryBusy = false;
   async function refreshInventory() {
     if (inventoryBusy) return;

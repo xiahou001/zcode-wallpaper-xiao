@@ -1,0 +1,93 @@
+// build-zcode-loader.js — 为 ZCode 的 renderer/index.html 构造可放进原槽位的加载器。
+//
+// 背景:asar 原位补丁只能做「等长覆写」——注入后的 HTML 必须 <= 原始槽位大小。
+// 真实 ZCode 的 index.html 约 28KB,压缩空行后空间充足;但为了应对将来 ZCode 把
+// index.html 做小(或换用更紧凑的构建),这里按剩余空间逐级降级:
+//   full  : link + script(带版本参数)
+//   lite  : link + script(无版本参数)
+//   tiny  : 仅一个 defer script,样式由 bootstrap.js 自己注入
+//   slim  : 先剥掉 HTML 注释 / 连续空白 / 行尾空白,再按上面三级重试
+//   hard  : 额外移除 <meta>/<link rel=icon> 等非关键头部标签(最后手段)
+// 都放不下则返回 null,由调用方提示改用影子目录方案。
+const INJECT_FULL =
+  '<link rel="stylesheet" href="http://127.0.0.1:7396/embed.css?v=2"/><script src="http://127.0.0.1:7396/bootstrap.js?v=2" defer></script>';
+const INJECT_LITE =
+  '<link rel="stylesheet" href="http://127.0.0.1:7396/embed.css"/><script src="http://127.0.0.1:7396/bootstrap.js" defer></script>';
+const INJECT_TINY = '<script src="http://127.0.0.1:7396/bootstrap.js" defer></script>';
+const ANCHOR = '<title>ZCode</title>';
+
+const VARIANTS = [
+  { tag: INJECT_FULL, variant: 'full' },
+  { tag: INJECT_LITE, variant: 'lite' },
+  { tag: INJECT_TINY, variant: 'tiny' },
+];
+
+function compactHtml(html) {
+  return html.replace(/^[ \t]+/gm, '').replace(/\n{2,}/g, '\n');
+}
+
+// 激进瘦身:去注释、去行尾空白、去多余空白字符
+function slimHtml(html) {
+  return compactHtml(html)
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/>\s+</g, '><')
+    .replace(/\n/g, '');
+}
+
+// 最后手段:在瘦身基础上再砍掉非关键头部标签(meta / preload 等)
+function hardSlimHtml(html) {
+  return slimHtml(html)
+    .replace(/<meta[^>]*>/g, '')
+    .replace(/<link[^>]*rel="(?:preload|modulepreload|icon|manifest)"[^>]*>/g, '');
+}
+
+// 把注入标签塞进文档;优先紧跟 title,其次 </head>,再次 <body 之后。
+function placeTag(html, tag) {
+  if (html.indexOf(ANCHOR) >= 0) return html.replace(ANCHOR, ANCHOR + tag);
+  if (html.indexOf('</head>') >= 0) return html.replace('</head>', tag + '</head>');
+  const b = html.indexOf('<body');
+  if (b >= 0) {
+    const close = html.indexOf('>', b);
+    if (close > 0) return html.slice(0, close + 1) + tag + html.slice(close + 1);
+  }
+  return null;
+}
+
+// 已注入时的替换:允许版本参数/协议/引号形式有差异
+const LOADER_RE = /<link[^>]*7396\/embed\.css[^>]*>\s*<script[^>]*7396\/(?:embed|bootstrap)\.js[^>]*><\/script>/g;
+const SINGLE_RE = /<script[^>]*7396\/(?:embed|bootstrap)\.js[^>]*><\/script>/g;
+
+// 返回 { text, variant } 或 null
+function buildLoader(orig, slotSize) {
+  const stages = [
+    { html: compactHtml(orig), prefix: '' },
+    { html: slimHtml(orig), prefix: 'slim-' },
+    { html: hardSlimHtml(orig), prefix: 'hard-' },
+  ];
+  for (const stage of stages) {
+    const base = stage.html;
+    const injected = base.indexOf('7396/') >= 0;
+    for (const c of VARIANTS) {
+      let out;
+      if (injected) {
+        if (LOADER_RE.test(base)) out = base.replace(LOADER_RE, c.tag);
+        else if (SINGLE_RE.test(base)) out = base.replace(SINGLE_RE, c.tag);
+        else out = base;
+        LOADER_RE.lastIndex = 0;
+        SINGLE_RE.lastIndex = 0;
+      } else {
+        out = placeTag(base, c.tag);
+      }
+      if (out && Buffer.byteLength(out, 'utf8') <= slotSize) {
+        return { text: out, variant: stage.prefix + c.variant };
+      }
+    }
+  }
+  return null;
+}
+
+module.exports = {
+  buildLoader, compactHtml, slimHtml, hardSlimHtml, placeTag,
+  INJECT_FULL, INJECT_LITE, INJECT_TINY, ANCHOR, LOADER_RE, SINGLE_RE,
+};

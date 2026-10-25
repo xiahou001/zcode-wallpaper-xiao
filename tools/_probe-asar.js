@@ -1,0 +1,15 @@
+const fs=require('fs'),path=require('path');
+const A=path.join(process.env.LOCALAPPDATA,'Programs','ZCode','resources','app.asar');
+const fd=fs.openSync(A,'r');const p=Buffer.alloc(64);fs.readSync(fd,p,0,64,0);
+const js=p.readUInt32LE(12);const jb=Buffer.alloc(js);fs.readSync(fd,jb,0,js,16);
+const h=JSON.parse(jb.toString('utf8'));const D=8+p.readUInt32LE(4);
+let n={files:h.files};for(const s of ['out','renderer','index.html'])n=n.files[s];
+const OFF=D+Number(n.offset),SZ=n.size;const b=Buffer.alloc(SZ);fs.readSync(fd,b,0,SZ,OFF);fs.closeSync(fd);
+const t=b.toString('utf8');
+console.log('slot offset='+OFF+' size='+SZ);
+console.log('HAS_7396='+t.includes('127.0.0.1:7396'));
+console.log('HAS_BOOTSTRAP='+t.includes('bootstrap.js'));
+console.log('HAS_EMBEDCSS='+t.includes('embed.css'));
+const m=t.match(/<link[^>]*7396[^>]*>|<script[^>]*7396[^>]*><\/script>/g);
+console.log('TAGS='+JSON.stringify(m));
+console.log('HEAD8='+JSON.stringify(t.slice(0,120)));

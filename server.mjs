@@ -635,6 +635,14 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/state') return sendJSON(res, 200, { ...state, luminance });
     // 极轻量的版本探针:客户端高频轮询它,变了才去取整份 /embed.css(降低换色的等待)
     if (p === '/api/version') return sendJSON(res, 200, { v: stateVersion });
+    if (p === '/api/version') {
+      // 注入代码版本指纹:任一前端文件变化即变(播放层据此自刷新)
+      let h = 0;
+      for (const rel of ['public/player.js', 'public/embed.js', 'public/embed.css', 'public/workbench.js']) {
+        try { const st2 = fs.statSync(path.join(__dirname, rel)); h = (h * 31 + st2.size + (st2.mtimeMs % 100000)) >>> 0; } catch (e3) {}
+      }
+      return sendJSON(res, 200, { v: String(h) });
+    }
     if (p === '/api/diag-log') return sendJSON(res, 200, { entries: diagEntries.slice(-80), reqlog: REQLOG.slice(-60) });
     if (p === '/api/scene-progress') {
       const token = String(u.searchParams.get('token') || '');
