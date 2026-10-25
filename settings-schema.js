@@ -8,6 +8,7 @@ export const DEFAULTS = {
   readability: { auto: true }, occlusion: 'hidden', sceneFps: 30, videoFpsCap: 0, playlists: [], workshopDirs: [],
   lyrics: false,        // 在线歌词跑马灯(默认关闭,与 DSH 一致)
   contentFilter: false, // 内容分级过滤:隐藏 R 级壁纸(DSH 功能)
+  weAssetsDir: null,    // WE 官方素材目录(手动覆盖;null=自动探测 Steam 库,localAssets 功能)
 };
 const num = (v, min, max, fallback) => { const n = Number(v); return Number.isFinite(n) ? Math.max(min, Math.min(max, n)) : fallback; };
 export function sanitizeState(input = {}) {
@@ -41,5 +42,8 @@ export function sanitizeState(input = {}) {
   s.lyrics = Boolean(input.lyrics);
   s.contentFilter = Boolean(input.contentFilter);
   s.videoFpsCap = [0, 15, 30, 60].includes(Number(input.videoFpsCap)) ? Number(input.videoFpsCap) : 0;   // 视频壁纸帧率上限(0=无限制,超上限自动转码)
+  // WE 素材目录:只存路径字符串,可用性(含 materials/ 子目录)由服务器在用时探测;
+  // 非法形态一律回落 null(= 自动探测),绝不因手工填错路径卡死状态保存。
+  s.weAssetsDir = typeof input.weAssetsDir === 'string' && input.weAssetsDir.trim() ? String(input.weAssetsDir).trim() : null;
   return s;
 }

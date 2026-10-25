@@ -458,6 +458,35 @@
       }).catch(function () { npLine.textContent = 'Now Playing:不可用'; });
       content.appendChild(npLine);
 
+      // ── WE 官方素材通路(localAssets,源自 dsh-wallpaper-engine)──
+      content.appendChild(el('div', 'sec', 'WE 官方素材(localAssets)'));
+      var waLine = el('div', 'muted', '正在检测 Wallpaper Engine 素材目录…');
+      content.appendChild(waLine);
+      api('/api/we-assets').then(function (wa) {
+        if (wa && wa.available) {
+          waLine.textContent = '✓ 已' + (wa.auto ? '自动检测' : '手动配置') + '素材目录(' + wa.textures + ' 张官方贴图):' + wa.dir + ' —— 场景壁纸将按名取官方像素,渲染与官方引擎对齐';
+        } else {
+          waLine.textContent = '未配置素材目录 —— 场景壁纸使用程序化复刻(观感近似);配置后场景效果链/材质/粒子的公共贴图改用官方像素';
+        }
+      }).catch(function () { waLine.textContent = '素材目录状态不可用'; });
+      var waRow = el('div', 'row');
+      var waInput = document.createElement('input');
+      waInput.type = 'text';
+      waInput.placeholder = '留空 = 自动探测 Steam 库;或填 WE 安装目录的 assets 路径';
+      waInput.style.flex = '1';
+      if (state.weAssetsDir) waInput.value = state.weAssetsDir;
+      waRow.appendChild(waInput);
+      var waSave = el('button', 'btn primary', '保存');
+      waSave.onclick = function () {
+        waSave.disabled = true;
+        api('/api/we-assets', { dir: waInput.value.trim() || null }).then(function (s) {
+          state = s; render();
+        }).catch(function () { waSave.disabled = false; });
+      };
+      waRow.appendChild(waSave);
+      content.appendChild(waRow);
+      content.appendChild(el('div', 'muted', '素材只从本机 WE 目录只读取用,不会复制;路径填错(缺 materials/ 子目录)会被拒绝。'));
+
       content.appendChild(el('div', 'sec', '维护'));
       var row2 = el('div', 'row');
       var scan = el('button', 'btn primary', '⟳ 重新扫描壁纸库');

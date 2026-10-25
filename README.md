@@ -11,10 +11,12 @@
 - **壁纸工作台**(`/workbench`):当前壁纸、选择网格、**自定义壁纸上传**(图片/视频)、外观调节、轮播列表、过场与省电设置
 - **智能可读性**:实时采样壁纸画面亮度,亮壁纸自动切换深色文字 + 浅玻璃,暗壁纸反之(源自 DSH 的"主题跟随/可读性下限"思路)
 - **文字描边 / 界面缩放 / 壁纸亮度**:全部滑杆即时生效(样式 5 秒热更新)
-- **切换过场**:换壁纸时新旧画面交叉淡化(无/600/1800/3000ms)
+- **切换过场**:7 种过场动画(交叉淡化/推移/擦除/光圈/缩放/百叶窗/无)+ 速度档,换壁纸时新旧画面按帧门控交接
 - **自动轮转 + 轮播列表**:新建/编辑/删除轮播列表,按列表定时轮换
 - **省电**:遮挡暂停三档(从不 / 切走·最小化 / 失焦即停)、场景帧率上限(15/30/60fps)
 - **视频帧率上限转码**:源帧率高于上限的视频自动 ffmpeg 降帧转码(NVENC 优先、回落 libx264),降低 GPU 解码占用;后台进行,下次切换生效
+- **faststart 无损重排**:moov 在文件尾部的视频一次性无损前置(切换延迟与文件大小解耦),启动时按轮换列表优先预热,faststart+转码缓存合计 6GB 预算自动回收
+- **WE 官方素材通路(localAssets)**:检测到本机 Wallpaper Engine 的 assets 目录时,场景壁纸按名取官方贴图(util/*、particle/**),渲染与官方引擎逐像素对齐;未检测到则静默回落程序化复刻(素材只读取用,不复制)
 - **Now Playing + 在线歌词**:读取 Windows 媒体控件(SMTC)正在播放的音乐,可选开启 lrclib.net 同步歌词跑马灯(纯 PowerShell WinRT,无原生依赖)
 - **ZCode 深度集成(可选)**:把壁纸层注入 ZCode 桌面客户端(Electron 应用)的聊天窗口背景,并在其设置页添加 Wallpaper 入口
 
@@ -90,7 +92,7 @@ restore.cmd   rem 一键恢复原生界面
 | POST | `/api/volume` `{volume}` | 音量 0~1 |
 | POST | `/api/rotate` `{enabled,intervalMin,playlist}` | 自动轮转 |
 | POST | `/api/playlists` `{name,ids}` / `/api/playlists/delete` `{name}` | 轮播列表管理 |
-| POST | `/api/transition` `{ms}` | 交叉淡化时长 |
+| POST | `/api/transition` `{ms,kind}` | 过场动画(7 种)与时长 |
 | POST | `/api/appearance` `{main,row,sidebar,stroke,brightness,zoom}` | 外观(玻璃α/描边/亮度/缩放) |
 | POST | `/api/readability` `{auto}` | 智能可读性开关 |
 | POST | `/api/luminance` `{v}` | 播放器亮度采样上报(0~1) |
@@ -101,6 +103,8 @@ restore.cmd   rem 一键恢复原生界面
 | POST | `/api/scan` | 重新扫描壁纸库 |
 | GET | `/api/diag-log` | 最近渲染和客户端诊断记录 |
 | GET | `/api/scene-progress?token=x` | Scene 资源传输状态 |
+| GET/POST | `/api/we-assets` | WE 素材目录状态 / 手动配置 `{dir|null}` |
+| GET | `/api/local-assets[/local/…]` | WE 官方素材消费端点(引擎 localAssets 客户端契约) |
 | GET | `/scene-video/<id>` | Scene 内嵌 MP4 降级源 |
 | GET | `/web-live/<id>/<file>` | Web 壁纸载荷(HTML 自动注入 WE API shim) |
 

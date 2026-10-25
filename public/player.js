@@ -98,7 +98,10 @@
       + '?type=scene&fit=cover&sceneFps=' + fps
       + '&muted=' + (muted ? 'true' : 'false')
       + '&src=' + encodeURIComponent(w.sceneBase)
-      + '&mediaBase=' + encodeURIComponent(location.origin + '/scene-files');
+      + '&mediaBase=' + encodeURIComponent(location.origin + '/scene-files')
+      // WE 官方素材通路(localAssets):配置了素材目录时,引擎按名取官方贴图,
+      // 场景渲染与官方引擎逐像素对齐;未配置时不加参数,引擎零请求。
+      + (state.weAssetsAvailable ? '&localAssets=1' : '');
     iframe.src = src;
     iframe.className = 'layer-enter';
     // 注意:iframe load ≠ 首帧。上屏交给看护(fps>0 时调 onLayerReady),

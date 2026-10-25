@@ -115,6 +115,58 @@ function steamLibraries() {
   return [...libs];
 }
 
+// ── WE 官方素材通路(localAssets,源自 dsh-wallpaper-engine)────────────────────
+// Wallpaper Engine 安装目录 assets 树里,场景效果链/材质/粒子按名引用的公共贴图
+// (util/*、particle/**、gradient/*)不在壁纸 pkg 内。配了素材目录后,vendored 引擎
+// (内建 local-assets 客户端)在场景页 URL 带 ?localAssets=1 时探测 /api/local-assets
+// 并按名取官方像素,场景渲染与官方引擎逐像素对齐;未配置则静默回落程序化复刻。
+// 素材属 WE 版权内容:只从用户本机路径**只读取用**,绝不复制入库(与上游合规口径一致)。
+let weAssetsProbe = { dir: null, at: 0 };
+function detectWeAssetsDir() {
+  if (Date.now() - weAssetsProbe.at < 60_000) return weAssetsProbe.dir;
+  weAssetsProbe.at = Date.now();
+  const cands = [];
+  if (process.env.WE_WALLPAPER_ASSETS_DIR && process.env.WE_WALLPAPER_ASSETS_DIR.trim()) {
+    cands.push(process.env.WE_WALLPAPER_ASSETS_DIR.trim());
+  }
+  for (const lib of steamLibraries()) cands.push(lib + '/steamapps/common/wallpaper_engine/assets');
+  weAssetsProbe.dir = null;
+  for (const c of cands) {
+    try { if (fs.statSync(path.join(c, 'materials')).isDirectory()) { weAssetsProbe.dir = c; break; } } catch {}
+  }
+  return weAssetsProbe.dir;
+}
+function weAssetsDir() {   // 手动配置优先;null/空 = 自动探测
+  const manual = typeof state.weAssetsDir === 'string' && state.weAssetsDir.trim();
+  return manual ? state.weAssetsDir : detectWeAssetsDir();
+}
+function weAssetsAvailable() {
+  const d = weAssetsDir();
+  if (!d) return false;
+  try { return fs.statSync(path.join(d, 'materials')).isDirectory(); } catch { return false; }
+}
+// 素材名清单:materials/**/*.tex 相对路径去扩展名(引擎按 shader/材质引用同名取用)。
+// 官方树约 586 个文件,每次挂载都重扫不值得 —— 60s 缓存(与上游 dev server 同约定)。
+const weAssetsNamesCache = new Map();
+function listWeAssetNames(dir) {
+  const hit = weAssetsNamesCache.get(dir);
+  if (hit && Date.now() - hit.at < 60_000) return hit.names;
+  const names = [];
+  (function walk(d, prefix) {
+    let entries;
+    try { entries = fs.readdirSync(d, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      const rel = prefix ? prefix + '/' + e.name : e.name;
+      if (e.isDirectory()) walk(path.join(d, e.name), rel);
+      else if (e.isFile() && e.name.toLowerCase().endsWith('.tex')) names.push(rel.slice(0, -4));
+    }
+  })(path.join(dir, 'materials'), '');
+  names.sort();
+  if (weAssetsNamesCache.size > 8) weAssetsNamesCache.clear();   // 目录改过就整体换血
+  weAssetsNamesCache.set(dir, { names, at: Date.now() });
+  return names;
+}
+
 function scanWallpapers() {
   const roots = [];
   for (const lib of steamLibraries()) {
@@ -353,14 +405,55 @@ function moovAtHead(abs) {
 
 // 变体生成(带去重:同一源并发请求共享同一个 promise)
 const faststartJobs = new Map();
+// 输出文件名带源指纹(abs|size|mtime 哈希):源被更新后旧变体自动失效,
+// 不会把陈旧字节当新源发出去(旧版按 id 命名,源更新后仍在服务旧缓存)。
+function fp8(s) { let h = 5381; for (let i = 0; i < s.length; i++) { h = ((h * 33) ^ s.charCodeAt(i)) >>> 0; } return h.toString(36); }
+function safeId(id) { return String(id || 'x').replace(/[^\w-]/g, '_').slice(0, 48); }
+const MEDIA_CACHE_BUDGET_BYTES = 6 * 1024 ** 3;   // faststart+transcode 缓存合计 6GB(源自 dsh-wallpaper-engine 字节预算口径)
+const MEDIA_CACHE_FRESH_MS = 10 * 60_000;         // 刚写不久的变体可能正在播放,回收时跳过
+function mediaCacheDir(kind) { return path.join(APP_DIR, 'cache', kind); }
+// 缓存预算回收:两目录合计超预算时按 mtime 从旧到新删,直到回到预算内。
+// 绝不删 10 分钟内新写的文件 —— 那可能就是正在播放的这一份。
+function sweepMediaCache() {
+  for (const kind of ['faststart', 'transcode']) {
+    const dir = mediaCacheDir(kind);
+    let files;
+    try {
+      files = fs.readdirSync(dir).map((f) => {
+        try { const st = fs.statSync(path.join(dir, f)); return st.isFile() ? { f, size: st.size, mtime: st.mtimeMs, path: path.join(dir, f) } : null; } catch { return null; }
+      }).filter(Boolean);
+    } catch { continue; }
+    let total = files.reduce((a, x) => a + x.size, 0);
+    files.sort((a, b) => a.mtime - b.mtime);
+    for (const x of files) {
+      if (total <= MEDIA_CACHE_BUDGET_BYTES) break;
+      if (Date.now() - x.mtime < MEDIA_CACHE_FRESH_MS) continue;
+      try { fs.unlinkSync(x.path); total -= x.size; diagRecord('cache-evict', { kind, file: x.f.slice(0, 60), bytes: x.size }); } catch {}
+    }
+  }
+}
+// 一次性清扫:改名升级(指纹命名)前留下的旧变体与崩溃残留,7 天以上一律回收。
+function sweepStaleCacheOnBoot() {
+  const WEEK = 7 * 24 * 3600_000;
+  for (const kind of ['faststart', 'transcode']) {
+    let names;
+    try { names = fs.readdirSync(mediaCacheDir(kind)); } catch { continue; }
+    for (const f of names) {
+      try {
+        const st = fs.statSync(path.join(mediaCacheDir(kind), f));
+        if (st.isFile() && Date.now() - st.mtimeMs > WEEK) fs.unlinkSync(path.join(mediaCacheDir(kind), f));
+      } catch {}
+    }
+  }
+}
 function faststartVariant(abs, id) {
   try {
     const st = fs.statSync(abs);
     if (!/\.(mp4|m4v|mov)$/i.test(abs)) return Promise.resolve(null);
     if (!detectFfmpeg()) return Promise.resolve(null);
     const key = abs + '|' + st.size + '|' + Math.floor(st.mtimeMs);
-    const outDir = path.join(APP_DIR, 'cache', 'faststart');
-    const out = path.join(outDir, id + '.mp4');
+    const outDir = mediaCacheDir('faststart');
+    const out = path.join(outDir, safeId(id) + '-' + fp8(key) + '.mp4');
     if (fs.existsSync(out) && fs.statSync(out).size > 1024) return Promise.resolve(out);
     if (moovAtHead(abs)) return Promise.resolve(null);   // 已是 faststart,无需重排
     if (faststartJobs.has(key)) return faststartJobs.get(key);
@@ -377,6 +470,7 @@ function faststartVariant(abs, id) {
             }
             fs.renameSync(tmp, out);
             diagRecord('faststart-ok', { id, bytes: fs.statSync(out).size });
+            sweepMediaCache();   // 新增变体后回看预算
             resolve(out);
           } catch (e2) { diagRecord('faststart-error', { id, error: String(e2 && e2.message || e2).slice(0, 240) }); resolve(null); }
         });
@@ -387,6 +481,30 @@ function faststartVariant(abs, id) {
     diagRecord('faststart-error', { id, error: String(err && err.message || err).slice(0, 240) });
     return Promise.resolve(null);
   }
+}
+
+// 启动预热(源自 dsh-wallpaper-engine 的 warmFaststartFavorites):轮换列表里的视频
+// 先做一遍 moov 前置(无损 -c copy),下次轮换到它们时元数据立即可得,切换不再
+// 等整个文件顺流读完。顺序=列表优先,串行执行不与播放抢磁盘,最多 12 张。
+async function warmFaststartOnBoot() {
+  await new Promise((r) => setTimeout(r, 2500));   // 先让服务器与播放链路就绪
+  const orderedIds = [];
+  const pl = state.playlists.find((x) => x.name === state.rotate.playlist);
+  if (pl && Array.isArray(pl.ids)) orderedIds.push(...pl.ids);
+  for (const w of inventory) if (!orderedIds.includes(w.id)) orderedIds.push(w.id);
+  let warmed = 0;
+  for (const id of orderedIds) {
+    if (warmed >= 12) break;
+    const w = inventory.find((x) => x.id === id);
+    if (!w || w.type !== 'video' || !w.fileAbs || !/\.(mp4|m4v|mov)$/i.test(w.fileAbs)) continue;
+    try {
+      if (moovAtHead(w.fileAbs)) continue;   // 本就 faststart:零成本跳过
+      warmed += 1;
+      await faststartVariant(w.fileAbs, id);
+      await new Promise((r) => setTimeout(r, 300));
+    } catch {}
+  }
+  if (warmed) diagRecord('faststart-warm', { warmed });
 }
 
 
@@ -403,7 +521,7 @@ function videoVariant(abs, id) {
   const key = abs + '|' + st.size + '|' + Math.floor(st.mtimeMs) + '|' + cap;
   if (transcodePin.has(key)) return Promise.resolve(transcodePin.get(key) ? transcodePin.get(key) : null);
   const outDir = path.join(APP_DIR, 'cache', 'transcode');
-  const out = path.join(outDir, id + '-' + cap + '.mp4');
+  const out = path.join(outDir, safeId(id) + '-' + cap + '-' + fp8(key) + '.mp4');   // 指纹命名:源更新自动失效
   if (fs.existsSync(out) && fs.statSync(out).size > 1024) { transcodePin.set(key, out); return Promise.resolve(out); }
   return faststartVariant(abs, id).then(function (fs0) {
     const src = fs0 || abs;
@@ -428,6 +546,7 @@ function videoVariant(abs, id) {
             fs.renameSync(tmp, out);
             diagRecord('transcode-ok', { id, encoder: encoders[k], fps: Math.round(fps), cap, bytes: fs.statSync(out).size });
             transcodePin.set(key, out);
+            sweepMediaCache();   // 新增变体后回看预算
             resolve(out);
           } catch (e2) { transcodePin.set(key, null); resolve(null); }
         });
@@ -632,7 +751,7 @@ const server = http.createServer(async (req, res) => {
         state,
       });
     }
-    if (p === '/api/state') return sendJSON(res, 200, { ...state, luminance });
+    if (p === '/api/state') return sendJSON(res, 200, { ...state, luminance, weAssetsAvailable: weAssetsAvailable(), weAssetsDir: weAssetsDir() });
     // 极轻量的版本探针:客户端高频轮询它,变了才去取整份 /embed.css(降低换色的等待)
     if (p === '/api/version') return sendJSON(res, 200, { v: stateVersion });
     if (p === '/api/version') {
@@ -779,6 +898,50 @@ const server = http.createServer(async (req, res) => {
       const v = Number(body.v);
       luminance = Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : null;
       return sendJSON(res, 200, { v: luminance });
+    }
+    // ---- WE 官方素材通路(消费面,契约对齐上游 renderer/src/local-assets.ts)----
+    // 四种请求形:GET /api/local-assets → {ok,roots};
+    //   /local/materials/index.json → {names};/local/<rel> → 贴图字节(围栏内,只读)。
+    // 未配置素材返回 {ok:false}(200)是正常态:引擎静默回落程序化复刻。
+    if (p === '/api/local-assets' || p.startsWith('/api/local-assets/')) {
+      if (method !== 'GET' && method !== 'HEAD') { res.statusCode = 405; return res.end('method not allowed'); }
+      const ok = weAssetsAvailable();
+      if (p === '/api/local-assets') return sendJSON(res, 200, { ok, roots: ok ? [{ id: 'local', dir: weAssetsDir() }] : [] });
+      if (!ok) return sendJSON(res, 404, { ok: false, error: '素材目录未配置或不可用' });
+      const root = weAssetsDir();
+      let rel = '';
+      try { rel = decodeURIComponent(p.slice('/api/local-assets/local/'.length)); } catch { res.statusCode = 400; return res.end('bad path'); }
+      if (rel === 'materials/index.json') return sendJSON(res, 200, { names: listWeAssetNames(root) });
+      if (!rel) { res.statusCode = 400; return res.end('bad path'); }
+      const target = fenced(root, rel);
+      if (!target) { res.statusCode = 403; return res.end('forbidden-we-assets'); }
+      let isFile = false;
+      try { isFile = fs.statSync(target).isFile(); } catch {}
+      if (!isFile) { res.statusCode = 404; return res.end('no such asset'); }
+      return serveFile(target, req, res, { cache: 'public, max-age=86400' });   // 本机只读素材,可长缓存
+    }
+
+    // ---- WE 素材目录配置(设置面):GET 状态 / POST {dir|null} 手动覆盖或回到自动 ----
+    if (p === '/api/we-assets' && method === 'GET') {
+      const d = weAssetsDir();
+      const ok = weAssetsAvailable();
+      return sendJSON(res, 200, { dir: d, available: ok, auto: !(state.weAssetsDir && state.weAssetsDir.trim()), textures: ok ? listWeAssetNames(d).length : 0 });
+    }
+    if (p === '/api/we-assets' && method === 'POST') {
+      const body = JSON.parse((await readBody(req)) || '{}');
+      const d = body && typeof body.dir === 'string' ? body.dir.trim() : null;
+      if (d) {
+        let hasMaterials = false;
+        try { hasMaterials = fs.statSync(path.join(d, 'materials')).isDirectory(); } catch {}
+        if (!hasMaterials) return sendJSON(res, 400, { error: '该目录下没有 materials/ 子目录 —— 请指向 Wallpaper Engine 安装目录的 assets 树(或其拷贝)' });
+        state.weAssetsDir = d;
+      } else {
+        state.weAssetsDir = null;   // 清除 → 回落自动探测
+      }
+      weAssetsProbe = { dir: null, at: 0 };
+      weAssetsNamesCache.clear();
+      saveState();
+      return sendJSON(res, 200, { ...state, weAssetsAvailable: weAssetsAvailable(), weAssetsDir: weAssetsDir() });
     }
     if (p === '/api/advanced' && method === 'POST') {
       const body = JSON.parse((await readBody(req)) || '{}');
@@ -1163,3 +1326,6 @@ server.listen(PORT, '127.0.0.1', () => {
 scheduleRotation();
 startNowPlayingPoller();
 startPatchWatchdog();
+sweepStaleCacheOnBoot();   // 指纹命名升级前留下的旧变体一次性回收
+sweepMediaCache();         // 启动先过一遍预算
+warmFaststartOnBoot();     // 轮换列表视频预热 moov 前置(后台串行,不阻塞服务)
