@@ -332,6 +332,32 @@
     document.addEventListener('visibilitychange', function () {
       if (!document.hidden) { refreshCss(); pollVersion(); diag(); }
     });
+    // ── 注入代码自更新 ──
+    // embed.js 只在 ZCode 重启时加载,以前每次改注入逻辑都得等用户重启。
+    // 现在:记住启动时的代码指纹(/api/version=文件哈希),变了且【窗口隐藏+
+    // 输入框无草稿】时才 location.reload() —— ZCode 带 restoreSession,重载
+    // 自动恢复会话;可见中或正在打字时绝不重载,下次隐藏时机再试。
+    var embedFp = null;
+    function fetchFp() {
+      return fetch(BASE + '/api/version?embed-fp=' + Date.now(), { cache: 'no-store' })
+        .then(function (r) { return r.json(); })
+        .then(function (d) { return d && d.v; })
+        .catch(function () { return null; });
+    }
+    fetchFp().then(function (v) { embedFp = v; });
+    setInterval(function () {
+      if (!document.hidden || embedFp == null) return;
+      fetchFp().then(function (v) {
+        if (v == null || v === embedFp) return;
+        var hasDraft = false;
+        try {
+          var inp = document.querySelector('[data-testid="chat-input"], .chat-composer-input-surface textarea, .chat-composer-input-surface [contenteditable="true"]');
+          hasDraft = !!inp && ((inp.value || inp.textContent || '').trim().length > 0);
+        } catch (e) {}
+        if (hasDraft) return;   // 有草稿:不重载,等下个周期
+        location.reload();
+      });
+    }, 120000);
     // ── 壁纸层延迟挂载:文本/模型加载提速的核心 ──
     // 壁纸是重资源(视频解码 + WebGL 初始化),以前页面一挂载就开始加载,
     // 正好和聊天应用的启动抢 CPU/GPU。现在等输入框出现(= 聊天应用挂载完成)
