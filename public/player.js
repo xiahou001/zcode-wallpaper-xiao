@@ -168,6 +168,17 @@
   const effFit = () => (state.appearance && state.appearance.fit) || 'cover';
   let mountedFit = null;   // 填充方式变了要重挂当前壁纸(场景层的 fit 在页面加载时读取)
 
+  // ── 画面镜像(源自 DSH flip):舞台整体 scaleX(-1),HUD 不动 ──
+  function applyFlip() {
+    if ($('stage')) $('stage').style.transform = (state.appearance && state.appearance.flip) ? 'scaleX(-1)' : '';
+  }
+
+  // ── 视频倍速(源自 DSH playbackRate):视频层专属,场景/web 不适用 ──
+  function applyRate() {
+    if (layerKind() !== 'video' || !layer) return;
+    try { layer.playbackRate = Math.max(0.5, Math.min(2, Number(state.videoRate) || 1)); } catch (e) {}
+  }
+
   function mountVideo(w) {
     const v = document.createElement('video');
     v.loop = true;
@@ -180,6 +191,7 @@
     v.className = 'layer-enter';
     v.addEventListener('loadeddata', () => {
       recoveryAttempts = 0;
+      applyRate();
       if (onLayerReady) { onLayerReady(); onLayerReady = null; }   // 首帧就绪才上屏
     });
     v.addEventListener('error', () => wallpaperFailed(w, 'video-error'));
@@ -347,6 +359,8 @@
     if (layer) layer.style.zIndex = '1';
     denseSampling();
     applyPaused();
+    applyRate();
+    applyFlip();
   }
 
   // ── 七种过场动画(源自 dsh-wallpaper-engine;type/时长走白名单)──
@@ -683,6 +697,8 @@
         mountCurrent();
         applyPaused();
         applyVolume();
+        applyRate();
+        applyFlip();
         applyRotate();
         applyLayerFilter();   // 外观(滤镜档)变化即时生效
       }

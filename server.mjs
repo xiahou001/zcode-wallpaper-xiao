@@ -92,12 +92,29 @@ function startNowPlayingPoller() {
     ps.unref();
   } catch {}
 }
+// 状态写盘(带 300ms 尾随防抖):版本号即时推进(客户端热更新不受影响),
+// 但滑杆拖动一秒几十次 POST 时不再每次都同步写盘 —— 磁盘写风暴既伤盘也
+// 冻结事件循环。退出前 flush 见 shutdown 钩子。
+let stateDirty = false;
+let stateFlushTimer = 0;
+const flushStateNow = () => {
+  if (!stateDirty) return;
+  stateDirty = false;
+  clearTimeout(stateFlushTimer); stateFlushTimer = 0;
+  try {
+    state = sanitizeState(state);
+    fs.mkdirSync(APP_DIR, { recursive: true });
+    fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+  } catch {}
+};
 const saveState = () => {
   try {
     state = sanitizeState(state);
     stateVersion += 1;   // 任何外观/状态写入都推进版本,宿主据此立即刷新样式
-    fs.mkdirSync(APP_DIR, { recursive: true });
-    fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+    stateDirty = true;
+    clearTimeout(stateFlushTimer);
+    stateFlushTimer = setTimeout(flushStateNow, 300);
+    if (stateFlushTimer.unref) stateFlushTimer.unref();
   } catch {}
 };
 
@@ -655,11 +672,19 @@ function fenced(fence, ...parts) {
   return abs;
 }
 
+const BODY_MAX_BYTES = 2 * 1024 * 1024;   // JSON 类请求体上限 2MB(上传走原始流,不经这里)
 function readBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
-    req.on('data', (c) => { chunks.push(c); if (chunks.length > 1e4) req.destroy(); });
-    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    let total = 0;
+    let overflow = false;
+    req.on('data', (c) => {
+      if (overflow) return;
+      total += c.length;
+      chunks.push(c);
+      if (total > BODY_MAX_BYTES) { overflow = true; chunks.length = 0; req.destroy(); reject(new Error('payload too large')); }
+    });
+    req.on('end', () => { if (!overflow) resolve(Buffer.concat(chunks).toString('utf8')); });
     req.on('error', reject);
   });
 }
@@ -1009,6 +1034,7 @@ const server = http.createServer(async (req, res) => {
       if (body.filter != null && WALLPAPER_FILTERS.includes(String(body.filter))) state.appearance.filter = String(body.filter);
       // 填充方式(视频/图片 object-fit 与场景 fit 参数,源自 DSH objectFit)
       if (body.fit != null && ['cover', 'contain', 'stretch'].includes(String(body.fit))) state.appearance.fit = String(body.fit);
+      if (body.flip != null) state.appearance.flip = !!body.flip;   // 画面镜像(DSH flip)
       // 主题模式三档与强调色(白名单/色值校验,非法值静默保持)
       if (body.themeMode != null && ['auto', 'dark', 'light'].includes(String(body.themeMode))) state.appearance.themeMode = String(body.themeMode);
       if (body.accentColor != null) {
@@ -1192,6 +1218,7 @@ const server = http.createServer(async (req, res) => {
       if (body.sceneFps != null) state.sceneFps = [15, 30, 60].includes(Number(body.sceneFps)) ? Number(body.sceneFps) : state.sceneFps;
       if (body.lyrics != null) state.lyrics = !!body.lyrics;
       if (body.batteryPause != null) state.batteryPause = !!body.batteryPause;   // 电池供电自动暂停(DSH pauseOnBattery)
+      if (body.videoRate != null) state.videoRate = Math.max(0.5, Math.min(2, Number(body.videoRate) || 1));   // 视频倍速(DSH playbackRate)
       if (body.videoFpsCap != null) state.videoFpsCap = [0, 15, 30, 60].includes(Number(body.videoFpsCap)) ? Number(body.videoFpsCap) : state.videoFpsCap;
       if (body.contentFilter != null) state.contentFilter = !!body.contentFilter;
       saveState();
@@ -1325,7 +1352,7 @@ html, body { background: #101216 !important; }
 #root, #root button, #root .btn { font-family: ${a.fontFamily ? JSON.stringify(a.fontFamily) + ' !important' : 'inherit'}; }
 ${a.cursor ? '#root { cursor: ' + a.cursor + ' !important; }' : ''}
 #root { position: relative; z-index: 1; ${a.zoom === 100 ? '' : `zoom: ${a.zoom}%; `}text-shadow: 0 1px 2px rgba(0,0,0,${(shadow * 0.7).toFixed(2)}), 0 0 ${(Math.max(2, Math.round(a.stroke / 10)))}px rgba(0,0,0,${(shadow * 0.45).toFixed(2)}); }
-#we-wp-layer { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; z-index: 0; pointer-events: none; filter: brightness(${a.brightness}%) saturate(1.08); }
+#we-wp-layer { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; z-index: 0; pointer-events: none; filter: brightness(${a.brightness}%) saturate(1.08);${a.flip ? ' transform: scaleX(-1) !important;' : ''} }
 /* 文字主题跟随壁纸亮度(智能可读性) */
 :root:not(.dark), .dark {
   --color-foreground: ${fg} !important;
@@ -1620,3 +1647,23 @@ const cdpInjector = startCdpInjector({
 sweepStaleCacheOnBoot();   // 指纹命名升级前留下的旧变体一次性回收
 sweepMediaCache();         // 启动先过一遍预算
 warmFaststartOnBoot();     // 轮换列表视频预热 moov 前置(后台串行,不阻塞服务)
+
+// ── 稳定性:优雅停机 + 异常兜底 ────────────────────────────────────────────
+// 退出前把防抖中的状态落盘(注销/关机时状态不丢),再关监听;
+// 未捕获异常:rejection 记日志继续跑(多数是瞬时网络);同步异常记日志后退出,
+// 让看门狗 5s 内拉起干净进程 —— 比带着坏状态硬撑更稳。
+function shutdown(signal) {
+  try { flushStateNow(); } catch (e) {}
+  try { cdpInjector.stop(); } catch (e) {}
+  try { server.close(() => process.exit(0)); } catch (e) { process.exit(0); }
+  setTimeout(() => process.exit(0), 1500).unref();
+}
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('unhandledRejection', (reason) => {
+  try { diagRecord('unhandled-rejection', { error: String(reason && reason.message || reason).slice(0, 200) }); } catch (e) {}
+});
+process.on('uncaughtException', (err) => {
+  try { diagRecord('uncaught-exception', { error: String(err && err.stack || err).slice(0, 400) }); } catch (e) {}
+  shutdown('uncaughtException');
+});

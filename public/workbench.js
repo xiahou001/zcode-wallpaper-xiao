@@ -6,6 +6,7 @@
   var BASE = location.origin;
   var state = null, wallpapers = [], playlists = [];
   var page = 'wall';
+  var typeFilter = 'all';          // 壁纸类型筛选(DSH typeFilter),跨 render 保留
   var editorName = null, editorIds = null;
   var scanStatus = '';              // "重新扫描"的结果提示,跨 render 保留
   var content = document.getElementById('content');
@@ -188,8 +189,18 @@
     }
 
     content.appendChild(el('div', 'sec', '选择壁纸(' + wallpapers.filter(function (x) { return x.playable; }).length + ' 张可用)'));
+    // 类型筛选(源自 DSH typeFilter):chips 即时过滤网格
+    var typeRow = el('div', 'row');
+    typeRow.style.flexWrap = 'wrap';
+    [['all', '全部'], ['scene', '场景'], ['video', '视频'], ['image', '图片'], ['web', '网页']].forEach(function (p) {
+      var b = el('button', 'btn' + (typeFilter === p[0] ? ' on' : ''), p[1]);
+      b.onclick = function () { typeFilter = p[0]; render(); };
+      typeRow.appendChild(b);
+    });
+    content.appendChild(typeRow);
+    var shown = wallpapers.filter(function (x) { return typeFilter === 'all' || x.type === typeFilter; });
     var grid = el('div', 'grid');
-    wallpapers.forEach(function (wp) {
+    shown.forEach(function (wp) {
       var card = el('div', 'card' + (state.currentId === wp.id ? ' current' : '') + (wp.playable ? '' : ' dead'));
       if (wp.playable) { card.onclick = function () { api('/api/select', { id: wp.id }).then(function (s) { state = s; render(); }); }; card.onpointerenter = function () { preheat(wp); }; }
       var img = el('img', 'thumb'); img.loading = 'lazy'; img.src = wp.preview || '';
@@ -410,6 +421,14 @@
         fitRow.appendChild(b);
       });
       content.appendChild(fitRow);
+      // 画面镜像(源自 DSH flip):舞台整体水平翻转
+      var flipRow = el('div', 'row');
+      flipRow.appendChild(el('label', null, '画面镜像'));
+      var flipB = el('button', 'btn' + (state.appearance.flip ? ' on' : ''), state.appearance.flip ? '● 已镜像(水平翻转)' : '○ 正常');
+      flipB.title = '壁纸画面水平翻转(构图反向);对场景/视频/图片同时生效';
+      flipB.onclick = function () { api('/api/appearance', { flip: !state.appearance.flip }).then(function (s) { state = s; render(); }); };
+      flipRow.appendChild(flipB);
+      content.appendChild(flipRow);
       slider(content, '聊天框磨砂(blur)', state.appearance.blur, 0, 40, function (v) { state.appearance.blur = v; api('/api/appearance', { blur: v }); });
       // 聊天框玻璃颜色:与 ZCode 的 Wallpaper Engine 设置页同一形式(色板 + 自定义取色)
       var swRow = el('div', 'row');
@@ -615,6 +634,16 @@
         occRow.appendChild(b);
       });
       content.appendChild(occRow);
+      // 视频倍速(源自 DSH playbackRate):视频壁纸专属
+      var rateRow = el('div', 'row');
+      rateRow.appendChild(el('label', null, '视频倍速'));
+      [[0.5, '0.5×'], [0.75, '0.75×'], [1, '1×'], [1.5, '1.5×'], [2, '2×']].forEach(function (p) {
+        var b = el('button', 'btn' + (Number(state.videoRate || 1) === p[0] ? ' on' : ''), p[1]);
+        b.title = '视频壁纸的播放速度(慢放看清细节/加速省资源);场景与网页壁纸不适用';
+        b.onclick = function () { api('/api/advanced', { videoRate: p[0] }).then(function (s) { state = s; render(); }); };
+        rateRow.appendChild(b);
+      });
+      content.appendChild(rateRow);
       // 电池省电(源自 DSH pauseOnBattery):用电池且未充电时自动暂停
       var batRow = el('div', 'row');
       var bat = el('button', 'btn' + (state.batteryPause ? ' on' : ''), state.batteryPause ? '● 电池供电自动暂停已开启' : '○ 电池供电自动暂停已关闭');
