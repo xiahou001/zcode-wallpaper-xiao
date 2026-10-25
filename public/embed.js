@@ -31,8 +31,11 @@
 
   // 版本探针:只取一个数字,比整份 CSS 便宜得多。
   // 用来把"在工作台换颜色"的等待从 5 秒压到 ~0.4 秒(工作台还会直接推消息,见下)。
+  // 自调度轮询:改过样式后 400ms 热路径;连续 30 次(约 12s)无变化退到 1.2s,
+  // 有变化或工作台推送立刻回热路径 —— 稳定状态下省一大半请求,也让出启动期。
   var lastVersion = -1;
   var versionBusy = false;
+  var pollStreak = 0;
   function pollVersion() {
     if (versionBusy || document.hidden) return;   // 窗口隐藏时跳过,省 CPU 与请求
     versionBusy = true;
@@ -42,10 +45,13 @@
         var v = d && d.v;
         var changed = lastVersion !== -1 && v !== lastVersion;
         lastVersion = v;
-        if (changed) refreshCss();
+        if (changed) { pollStreak = 0; refreshCss(); } else { pollStreak += 1; }
       })
       .catch(function () {})
       .then(function () { versionBusy = false; });
+  }
+  function pollLoop() {
+    setTimeout(function () { pollVersion(); pollLoop(); }, pollStreak > 30 ? 1200 : 400);
   }
 
   // ── 壁纸 iframe ────────────────────────────────────────────
@@ -111,7 +117,7 @@
 
   window.addEventListener('message', function (event) {
     // 工作台改了外观 → 直接推消息,立即重取样式(无需等轮询)
-    if (event.data === 'we-wp-appearance') { refreshCss(); return; }
+    if (event.data === 'we-wp-appearance') { pollStreak = 0; refreshCss(); return; }
     if (!frame || event.source !== frame.contentWindow || event.origin !== BASE) return;
     if (event.data && event.data.source === 'we-wallpaper' && event.data.type === 'ready') {
       frameReady = true;
@@ -270,16 +276,34 @@
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', onReady);
   else onReady();
   function onReady() {
-    mount();
     refreshCss();
-    setInterval(pollVersion, 400);            // 快路径:版本变了立刻应用(~0.4s)
     setInterval(refreshCss, 15000);           // 兜底:直接改服务器上 embed.css 时也能生效
-    diag();
+    pollLoop();
     setInterval(diag, 60000);
+    setTimeout(diag, 5000);                   // 首次诊断避开聊天应用挂载关键期
     // 窗口从隐藏恢复时立即补一次样式/版本/诊断,隐藏期间的跳过不留空窗
     document.addEventListener('visibilitychange', function () {
       if (!document.hidden) { refreshCss(); pollVersion(); diag(); }
     });
+    // ── 壁纸层延迟挂载:文本/模型加载提速的核心 ──
+    // 壁纸是重资源(视频解码 + WebGL 初始化),以前页面一挂载就开始加载,
+    // 正好和聊天应用的启动抢 CPU/GPU。现在等输入框出现(= 聊天应用挂载完成)
+    // 再挂壁纸,最多等 2.5s:聊天先独占资源,壁纸随后淡入,快机器上几乎无感。
+    var mounted = false;
+    function mountWhenAppReady() {
+      if (mounted) return;
+      mounted = true;
+      mount();
+    }
+    (function waitApp() {
+      var APP_READY = '[data-testid="chat-input"],.chat-composer-region';
+      if (document.querySelector(APP_READY)) { setTimeout(mountWhenAppReady, 300); return; }
+      var mo = new MutationObserver(function () {
+        if (document.querySelector(APP_READY)) { mo.disconnect(); setTimeout(mountWhenAppReady, 300); }
+      });
+      mo.observe(document.body || document.documentElement, { childList: true, subtree: true });
+      setTimeout(function () { mo.disconnect(); mountWhenAppReady(); }, 2500);
+    })();
     // 一次性 DOM 抓取:从"输入框所在的屏幕位置"反查元素链,用于精确定位遮挡壁纸的容器
     setTimeout(dumpComposerRegion, 4000);
     setTimeout(dumpComposerRegion, 15000);
