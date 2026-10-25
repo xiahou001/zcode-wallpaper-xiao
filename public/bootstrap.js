@@ -9,7 +9,11 @@
   function retry() {
     if (loading) return;
     loading = true;
-    fetch(BASE + '/api/state?bootstrap=' + Date.now(), { cache: 'no-store' })
+    // 探活必须带超时:服务器重启窗口期可能"建连成功但不响应",
+    // 没有超时的话 fetch 会永远挂起,壁纸层再也不重试。
+    var ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    var kill = setTimeout(function () { if (ctrl) ctrl.abort(); }, 3500);
+    fetch(BASE + '/api/state?bootstrap=' + Date.now(), { cache: 'no-store', signal: ctrl && ctrl.signal })
       .then(function (r) {
         if (!r.ok) throw new Error('wallpaper server ' + r.status);
         var script = document.createElement('script');
@@ -27,7 +31,8 @@
         loading = false;
         clearTimeout(retryTimer);
         retryTimer = setTimeout(retry, 2000);
-      });
+      })
+      .then(function () { clearTimeout(kill); });
   }
   retry();
 })();

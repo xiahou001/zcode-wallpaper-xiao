@@ -73,7 +73,12 @@ if (needBackup) {
   console.log('原生 index.html 已备份: ' + genFile + ' (' + pristineBuf.length + ' 字节)');
 }
 
-if (orig.includes('embed.css') && orig.includes('bootstrap.js')) { console.log('ALREADY PATCHED IN ASAR'); process.exit(0); }
+// 已是目标形态(只有 defer 脚本、没有渲染阻塞的 7396 link)才允许早退;
+// 带 link 的旧形态要继续走重补丁,升级成 script-only。
+const hasBootstrapScript = orig.includes('bootstrap.js');
+const hasBlockingLink = /<link[^>]*127\.0\.0\.1:7396/.test(orig);
+if (hasBootstrapScript && !hasBlockingLink) { console.log('ALREADY PATCHED IN ASAR (script-only loader)'); process.exit(0); }
+if (hasBlockingLink) console.log('检测到旧形态注入(渲染阻塞 link),升级为 script-only…');
 if (!orig.includes('<title>ZCode</title>')) { console.error('UNEXPECTED CONTENT'); process.exit(1); }
 
 // 构造加载器:按槽位剩余空间自动分三级降级(见 build-zcode-loader.js)

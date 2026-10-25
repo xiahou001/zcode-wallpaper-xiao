@@ -34,7 +34,7 @@
   var lastVersion = -1;
   var versionBusy = false;
   function pollVersion() {
-    if (versionBusy) return;
+    if (versionBusy || document.hidden) return;   // 窗口隐藏时跳过,省 CPU 与请求
     versionBusy = true;
     fetch(BASE + '/api/version', { cache: 'no-store' })
       .then(function (r) { return r.json(); })
@@ -152,6 +152,7 @@
 
   // ── 诊断上报 ───────────────────────────────────────────────
   function diag() {
+    if (document.hidden) return;   // 隐藏时做全页 querySelectorAll+getComputedStyle 是纯浪费(强制布局)
     try {
       var f = document.getElementById('we-wp-layer');
       var info = {
@@ -275,6 +276,10 @@
     setInterval(refreshCss, 15000);           // 兜底:直接改服务器上 embed.css 时也能生效
     diag();
     setInterval(diag, 60000);
+    // 窗口从隐藏恢复时立即补一次样式/版本/诊断,隐藏期间的跳过不留空窗
+    document.addEventListener('visibilitychange', function () {
+      if (!document.hidden) { refreshCss(); pollVersion(); diag(); }
+    });
     // 一次性 DOM 抓取:从"输入框所在的屏幕位置"反查元素链,用于精确定位遮挡壁纸的容器
     setTimeout(dumpComposerRegion, 4000);
     setTimeout(dumpComposerRegion, 15000);
@@ -334,10 +339,15 @@
       return;
     }
   }
-  // 设置页是 SPA 路由:进设置时 DOM 才出现,靠观察器触发;500ms 节流
+  // 设置页是 SPA 路由:进设置时 DOM 才出现,靠观察器触发;1s 节流。
+  // 聊天流式输出时 DOM 变更极频繁,而扫描要序列化整棵 body 文本(O(树)),
+  // 所以窗口隐藏时直接跳过,恢复显示后的那次变更自然会触发。
   var hookScanPending = 0;
   new MutationObserver(function () {
-    if (hookScanPending) return;
-    hookScanPending = setTimeout(function () { hookScanPending = 0; hookSettingsDialog(); }, 500);
+    if (hookScanPending || document.hidden) return;
+    hookScanPending = setTimeout(function () {
+      hookScanPending = 0;
+      if (!document.hidden) hookSettingsDialog();
+    }, 1000);
   }).observe(document.documentElement, { childList: true, subtree: true });
 })();
