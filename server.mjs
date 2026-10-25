@@ -1189,6 +1189,10 @@ const server = http.createServer(async (req, res) => {
       const glassLight = hexLum(glassBase) > 0.55;              // 玻璃本身偏亮?
       // 聊天框文字:fontColorComposer 空 = 按玻璃明暗自动(聊天框底色是玻璃,与主区亮度无关)
       const glassFg = a.fontColorComposer || (glassLight ? '#1b1e24' : '#eef1f6');
+      // 强调色/链接文字的可读性:默认蓝(引用标题/链接/强调)在玻璃上对比不足
+      // (实测 ~2.5:1,WCAG 要求 4.5:1),按明暗侧换成高对比蓝并成对给出前景色。
+      const accentFg = lightWall ? '#3b5bdb' : '#a5b4ff';       // 亮壁纸→深蓝 / 暗壁纸→浅蓝紫
+      const accentOn = lightWall ? '#f2f4ff' : '#12151d';       // 强调色作底时的文字(按钮等)
       const shadow = Math.round(a.stroke * 0.5) / 100;
       const css = `
 @property --blindp { syntax: '<percentage>'; inherits: false; initial-value: 0%; }
@@ -1213,6 +1217,18 @@ ${a.cursor ? '#root { cursor: ' + a.cursor + ' !important; }' : ''}
   --color-input-border: ${glassLight ? 'rgba(0,0,0,.14)' : 'rgba(255,255,255,.18)'} !important;
 }
 .dark { --color-surface: ${glassDark(lightWall ? '#1b1e24' : '#ffffff', Math.round(a.row / 5))} !important; }
+/* 强调色/链接/引用标题:换成与明暗侧匹配的高对比蓝,并成对覆盖强调底色上的文字。
+   不存在的 token 被安全忽略;text-accent/--color-accent 作为底色时(accent-foreground/
+   primary-foreground)也换成配对色,按钮类元素同步保持 WCAG 对比。 */
+:root:not(.dark), .dark {
+  --color-accent: ${accentFg} !important;
+  --color-link: ${accentFg} !important;
+  --color-info: ${accentFg} !important;
+  --color-primary: ${accentFg} !important;
+  --color-accent-foreground: ${accentOn} !important;
+  --color-primary-foreground: ${accentOn} !important;
+}
+#root a { color: ${accentFg} !important; }   /* 裸 <a> 不走 token,按元素兜底 */
 /* 分区文字色(每块区域独立):全局 fg 是主区/基线;
    侧栏按 shadcn sidebar 家族容器作用域覆盖(排除 sidebar-inset —— 那是主区内容);
    自定义属性随子树继承,改容器一处即全侧栏生效;不存在的 token 会被安全忽略。 */

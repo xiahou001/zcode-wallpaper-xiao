@@ -217,6 +217,30 @@
           } catch (e) { return { err: String(e).slice(0, 80) }; }
         })(),
         slots: [],
+        // 强调色残留探针:找仍为蓝色系的叶子文字(引用/链接/硬编码 Tailwind 蓝),
+        // 上报类名链 + 实际色值 —— token 覆盖没接住的精确数据从这里来。
+        accentText: (function () {
+          try {
+            var out = [];
+            var els = document.body ? document.body.querySelectorAll('*') : [];
+            for (var i = 0; i < els.length && out.length < 8; i++) {
+              var el = els[i];
+              if (el.children.length) continue;
+              var r = el.getBoundingClientRect();
+              if (r.width < 30 || r.height < 8) continue;
+              var cs = getComputedStyle(el);
+              var m = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(cs.color);
+              if (!m) continue;
+              var R = +m[1], G = +m[2], B = +m[3];
+              if (!(B > 120 && B > R + 20 && B >= G)) continue;   // 蓝色系
+              var chain = [];
+              var p = el;
+              for (var k = 0; k < 4 && p; k++) { chain.push(String(p.className || p.tagName).slice(0, 70)); p = p.parentElement; }
+              out.push({ color: cs.color, cls: chain });
+            }
+            return out;
+          } catch (e) { return { err: String(e).slice(0, 60) }; }
+        })(),
         // 分区探针:分区文字色的选择器是否命中(shadcn sidebar 家族/主区/聊天框)
         zones: (function () {
           try {
