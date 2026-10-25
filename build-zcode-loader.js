@@ -47,7 +47,8 @@ function hardSlimHtml(html) {
     .replace(/<link[^>]*rel="(?:preload|modulepreload|icon|manifest)"[^>]*>/g, '');
 }
 
-// 把注入标签塞进文档;优先紧跟 title,其次 </head>,再次 <body 之后。
+// 把注入标签塞进文档;锚点链四层冗余:标题 → </head> → <body → 首个 <meta。
+// ZCode 未来改掉 <title>ZCode</title> 文案时仍能落位(更新免疫)。
 function placeTag(html, tag) {
   if (html.indexOf(ANCHOR) >= 0) return html.replace(ANCHOR, ANCHOR + tag);
   if (html.indexOf('</head>') >= 0) return html.replace('</head>', tag + '</head>');
@@ -56,7 +57,13 @@ function placeTag(html, tag) {
     const close = html.indexOf('>', b);
     if (close > 0) return html.slice(0, close + 1) + tag + html.slice(close + 1);
   }
+  const m = html.indexOf('<meta');
+  if (m >= 0) return html.slice(0, m) + tag + html.slice(m);
   return null;
+}
+// 文档里是否存在任一可用锚点(asar 补丁脚本的 UNEXPECTED 闸门用)
+function hasAnchor(html) {
+  return html.indexOf(ANCHOR) >= 0 || html.indexOf('</head>') >= 0 || html.indexOf('<body') >= 0 || html.indexOf('<meta') >= 0;
 }
 
 // 已注入时的替换:允许版本参数/协议/引号形式有差异
@@ -97,6 +104,6 @@ function buildLoader(orig, slotSize) {
 }
 
 module.exports = {
-  buildLoader, compactHtml, slimHtml, hardSlimHtml, placeTag,
+  buildLoader, compactHtml, slimHtml, hardSlimHtml, placeTag, hasAnchor,
   INJECT_FULL, INJECT_LITE, INJECT_TINY, ANCHOR, LOADER_RE, SINGLE_RE,
 };

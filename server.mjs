@@ -749,6 +749,61 @@ function systemFonts() {
   });
 }
 
+// ── 注入轨道状态(fuse + asar 标记;5 分钟缓存,诊断一眼看清双轨健康度)──
+// (ZCODE_DIR 已在前文声明,此处直接复用)
+const INJECT_STATUS_TTL = 5 * 60_000;
+let injectStatusCache = { at: 0, data: null };
+function readFuseIntegrity() {
+  try {
+    const exe = path.join(ZCODE_DIR, 'ZCode.exe');
+    const est = fs.statSync(exe);
+    const SENT = Buffer.from('dL7pKGdnNz796PbbjQWNKmHXBZaB9tsX');
+    const CH = 4 * 1024 * 1024;
+    const efd = fs.openSync(exe, 'r');
+    const buf = Buffer.alloc(CH + SENT.length);
+    let pos = 0, found = -1;
+    while (pos < est.size && found < 0) {
+      const n = fs.readSync(efd, buf, 0, Math.min(buf.length, est.size - pos), pos);
+      if (n <= 0) break;
+      const i = buf.slice(0, n).indexOf(SENT);
+      if (i >= 0) { found = pos + i; break; }
+      pos += CH - SENT.length;
+    }
+    if (found < 0) { fs.closeSync(efd); return false; }   // 老 Electron 无 fuse
+    const tail = Buffer.alloc(48);
+    fs.readSync(efd, tail, 0, 48, found + SENT.length);
+    fs.closeSync(efd);
+    const b = tail[2 + 4];   // fuse[4] = EnableEmbeddedAsarIntegrityValidation
+    return b === 1 || b === 0x31;
+  } catch { return null; }
+}
+function asarMarked() {
+  try {
+    const asar = path.join(ZCODE_DIR, 'resources', 'app.asar');
+    const fd = fs.openSync(asar, 'r');
+    try {
+      const probe = Buffer.alloc(64);
+      fs.readSync(fd, probe, 0, 64, 0);
+      const jsonSize = probe.readUInt32LE(12);
+      const jb = Buffer.alloc(jsonSize);
+      fs.readSync(fd, jb, 0, jsonSize, 16);
+      const header = JSON.parse(jb.toString('utf8'));
+      let node = { files: header.files };
+      for (const part of ['out', 'renderer', 'index.html']) node = node.files[part];
+      const off = 8 + probe.readUInt32LE(4) + Number(node.offset);
+      const buf = Buffer.alloc(Math.min(node.size, 8192));
+      fs.readSync(fd, buf, 0, buf.length, off);
+      return buf.toString('utf8').includes('bootstrap.js');
+    } finally { fs.closeSync(fd); }
+  } catch { return null; }   // 读不到(更新中/权限)→ 未知
+}
+function injectStatus() {
+  if (Date.now() - injectStatusCache.at < INJECT_STATUS_TTL) return injectStatusCache.data;
+  injectStatusCache = { at: Date.now(), data: { fuseIntegrity: readFuseIntegrity(), asarMarked: asarMarked(), cdp: cdpInjector ? cdpInjector.status() : null } };
+  return injectStatusCache.data;
+}
+setTimeout(() => injectStatus(), 4000).unref?.();   // 开机先暖一次缓存
+
 const server = http.createServer(async (req, res) => {
   const u = new URL(req.url || '/', 'http://x');
   const p = decodeURIComponent(u.pathname);
@@ -809,7 +864,7 @@ const server = http.createServer(async (req, res) => {
     }
     // 样式版本(embed.css 热更新探针):任何状态写入推进;客户端变了才重取 CSS
     if (p === '/api/style-version') return sendJSON(res, 200, { v: stateVersion });
-    if (p === '/api/diag-log') return sendJSON(res, 200, { entries: diagEntries.slice(-80), reqlog: REQLOG.slice(-60), cdp: cdpInjector.status() });
+    if (p === '/api/diag-log') return sendJSON(res, 200, { entries: diagEntries.slice(-80), reqlog: REQLOG.slice(-60), cdp: cdpInjector.status(), inject: injectStatus() });
     if (p === '/api/scene-progress') {
       const token = String(u.searchParams.get('token') || '');
       return sendJSON(res, 200, sceneProgressSnapshot(token));

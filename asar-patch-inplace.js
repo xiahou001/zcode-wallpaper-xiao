@@ -110,14 +110,16 @@ if (needBackup) {
 
 // 已是目标形态(只有 defer 脚本、没有渲染阻塞的 7396 link)才允许早退;
 // 带 link 的旧形态要继续走重补丁,升级成 script-only。
+const { buildLoader, hasAnchor } = require('./build-zcode-loader');
 const hasBootstrapScript = orig.includes('bootstrap.js');
 const hasBlockingLink = /<link[^>]*127\.0\.0\.1:7396/.test(orig);
 if (hasBootstrapScript && !hasBlockingLink) { console.log('ALREADY PATCHED IN ASAR (script-only loader)'); process.exit(0); }
 if (hasBlockingLink) console.log('检测到旧形态注入(渲染阻塞 link),升级为 script-only…');
-if (!orig.includes('<title>ZCode</title>')) { console.error('UNEXPECTED CONTENT'); process.exit(1); }
+// 锚点闸门放宽:未来 ZCode 改掉 <title>ZCode</title> 文案时,只要还有
+// </head> / <body / <meta 任一锚点就继续打(hasAnchor 四层冗余)。
+if (!hasAnchor(orig)) { console.error('UNEXPECTED CONTENT: 找不到任何注入锚点(title/head/body/meta),拒绝盲写'); process.exit(1); }
 
 // 构造加载器:按槽位剩余空间自动分三级降级(见 build-zcode-loader.js)
-const { buildLoader } = require('./build-zcode-loader');
 const built = buildLoader(orig, SIZE);
 if (!built) {
   console.error('DOES NOT FIT: 槽位 ' + SIZE + ' 字节连极简加载器都放不下。');

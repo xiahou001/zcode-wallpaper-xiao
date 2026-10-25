@@ -117,7 +117,13 @@ class Ws {
 // ── 注入器:轮询目标 + 挂载 + 注册 bootstrap ──────────────────────────
 export function startCdpInjector(opts = {}) {
   const port = Number(opts.port || 9333);
-  const urlMatch = opts.urlMatch || ((t) => (t.url || '').startsWith('file:') && /index\.html/i.test(t.url || '') || (t.title || '') === 'ZCode');
+  // 目标匹配(更新免疫):任何 file:// 的渲染页都认(不含 devtools),
+  // 或标题含 zcode(大小写不敏感)—— 未来 ZCode 改渲染文件名/路径也不漏。
+  const urlMatch = opts.urlMatch || ((t) => {
+    const u = String(t.url || '');
+    const ti = String(t.title || '').toLowerCase();
+    return (u.startsWith('file:') && !u.includes('devtools')) || ti.includes('zcode');
+  });
   const pollMs = Number(opts.pollMs || 5000);
   const log = opts.log || (() => {});
   const targets = new Map();   // targetId -> ws
