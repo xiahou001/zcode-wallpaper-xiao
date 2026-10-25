@@ -4,13 +4,15 @@ export const DEFAULTS = {
   currentId: null, paused: false, volume: 1,
   rotate: { enabled: false, intervalMin: 30, playlist: null },
   transition: { kind: 'crossfade', ms: 1800 },
-  appearance: { main: 0, row: 52, sidebar: 55, brightness: 100, stroke: 35, zoom: 100, blur: 22, glass: 50, glassColor: '#14161c', fontFamily: '', cursor: '' },
+  appearance: { main: 0, row: 52, sidebar: 55, brightness: 100, stroke: 35, zoom: 100, blur: 22, glass: 50, glassColor: '#14161c', fontFamily: '', cursor: '', filter: 'none' },
   readability: { auto: true }, occlusion: 'hidden', sceneFps: 30, videoFpsCap: 0, playlists: [], workshopDirs: [],
   lyrics: false,        // 在线歌词跑马灯(默认关闭,与 DSH 一致)
   contentFilter: false, // 内容分级过滤:隐藏 R 级壁纸(DSH 功能)
   weAssetsDir: null,    // WE 官方素材目录(手动覆盖;null=自动探测 Steam 库,localAssets 功能)
 };
 const num = (v, min, max, fallback) => { const n = Number(v); return Number.isFinite(n) ? Math.max(min, Math.min(max, n)) : fallback; };
+// 壁纸滤镜白名单(与 player.js 的 WALLPAPER_FILTERS 一一对应)
+export const WALLPAPER_FILTERS = ['none','blur','grayscale','sepia','vivid','warm','cool','invert','brighten','darken','contrast'];
 export function sanitizeState(input = {}) {
   const s = { ...DEFAULTS, ...input };
   s.currentId = input.currentId == null ? null : String(input.currentId);
@@ -30,6 +32,15 @@ export function sanitizeState(input = {}) {
   s.appearance.glass = num(s.appearance.glass, 0, 100, DEFAULTS.appearance.glass);   // 聊天框玻璃透明度(0=实心 100=最透)
   s.appearance.fontFamily = /^[\w\u4e00-\u9fa5,\s'\"-]{0,120}$/.test(String(s.appearance.fontFamily || '')) ? String(s.appearance.fontFamily).trim() : '';
   s.appearance.cursor = ['', 'default', 'pointer', 'crosshair', 'text'].includes(String(s.appearance.cursor || '')) ? String(s.appearance.cursor || '') : '';
+  // 壁纸滤镜(源自 dsh-wallpaper-engine 的效果白名单,场景/视频/图片层通用)
+  s.appearance.filter = WALLPAPER_FILTERS.includes(s.appearance.filter) ? s.appearance.filter : 'none';
+  // 自定义外观预设:只保留名字与外观快照,上限 12 个(防状态文件无限膨胀)
+  s.appearancePresets = Array.isArray(input.appearancePresets)
+    ? input.appearancePresets.slice(0, 12).filter((p) => p && String(p.name || '').trim()).map((p) => ({
+      name: String(p.name).trim().slice(0, 24),
+      appearance: { ...DEFAULTS.appearance, ...(p.appearance || {}), filter: WALLPAPER_FILTERS.includes(p.appearance?.filter) ? p.appearance.filter : 'none' },
+    }))
+    : [];
   // 聊天框玻璃颜色:只接受 #rrggbb,非法值回落到默认深空黑
   s.appearance.glassColor = /^#[0-9a-f]{6}$/i.test(String(s.appearance.glassColor || ''))
     ? String(s.appearance.glassColor).toLowerCase()

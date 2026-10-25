@@ -213,6 +213,50 @@
     parent.appendChild(row);
   }
     function renderLook() {
+      // ── 外观预设(出厂七套蒸馏自 dsh-wallpaper-engine;自定义快照存服务器)──
+      content.appendChild(el('div', 'sec', '外观预设(源自 dsh-wallpaper-engine 出厂方案)'));
+      var presetRow = el('div', 'row');
+      presetRow.style.flexWrap = 'wrap';
+      api('/api/presets').then(function (pr) {
+        (pr.factory || []).forEach(function (f) {
+          var b = el('button', 'btn', f.name);
+          b.title = '玻璃 ' + f.patch.glassColor + ' · 透明度 ' + f.patch.glass + ' · 磨砂 ' + f.patch.blur + 'px · 亮度 ' + f.patch.brightness + '%' + (f.patch.filter !== 'none' ? ' · 鲜艳滤镜' : '');
+          b.onclick = function () { api('/api/presets/apply', { id: f.id }).then(function (s) { state = s; render(); }); };
+          presetRow.appendChild(b);
+        });
+        (pr.custom || []).forEach(function (c) {
+          var b = el('button', 'btn', c.name);
+          b.onclick = function () { api('/api/presets/apply', { name: c.name }).then(function (s) { state = s; render(); }); };
+          presetRow.appendChild(b);
+          var del = el('button', 'btn', '×');
+          del.title = '删除预设 ' + c.name;
+          del.onclick = function () { api('/api/presets/delete', { name: c.name }).then(function (s) { state = s; render(); }); };
+          presetRow.appendChild(del);
+        });
+        var nameIn = document.createElement('input');
+        nameIn.type = 'text'; nameIn.placeholder = '存当前…'; nameIn.style.width = '96px';
+        var saveB = el('button', 'btn primary', '保存预设');
+        saveB.onclick = function () {
+          var n = nameIn.value.trim() || ('我的预设 ' + new Date().toISOString().slice(5, 16).replace('T', ' '));
+          api('/api/presets/save', { name: n }).then(function (s) { state = s; render(); });
+        };
+        presetRow.appendChild(nameIn); presetRow.appendChild(saveB);
+      }).catch(function () {});
+      content.appendChild(presetRow);
+      content.appendChild(el('div', 'muted', '点击即应用(玻璃颜色/透明度/磨砂/亮度/滤镜五个字段);不影响分区透明度与字体。调好后可存为自己的预设,最多 12 个。'));
+
+      // ── 壁纸滤镜(源自 dsh-wallpaper-engine 效果白名单)──
+      content.appendChild(el('div', 'sec', '壁纸滤镜'));
+      var fRow = el('div', 'row');
+      fRow.style.flexWrap = 'wrap';
+      [['none', '无'], ['blur', '模糊'], ['grayscale', '黑白'], ['sepia', '怀旧'], ['vivid', '鲜艳'], ['warm', '暖调'], ['cool', '冷调'], ['invert', '反色'], ['brighten', '提亮'], ['darken', '压暗'], ['contrast', '高对比']].forEach(function (p) {
+        var b = el('button', 'btn' + ((state.appearance.filter || 'none') === p[0] ? ' on' : ''), p[1]);
+        b.onclick = function () { api('/api/appearance', { filter: p[0] }).then(function (s) { state = s; render(); }); };
+        fRow.appendChild(b);
+      });
+      content.appendChild(fRow);
+      content.appendChild(el('div', 'muted', '对壁纸画面整体生效:场景壁纸走渲染引擎通道,视频/图片/web 走 CSS;聊天窗口内同样生效。'));
+
       content.appendChild(el('div', 'sec', '智能可读性(源自 dsh-wallpaper-engine 的主题跟随)'));
       var rr = el('div', 'row');
       var rbtn = el('button', 'btn' + (state.readability.auto ? ' on' : ''), state.readability.auto ? '● 已开启' : '○ 已关闭');

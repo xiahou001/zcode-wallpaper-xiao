@@ -27,7 +27,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { sanitizeState } from './settings-schema.js';
+import { sanitizeState, WALLPAPER_FILTERS } from './settings-schema.js';
 import wpWatchdog from './watchdog-patch.js';
 const startPatchWatchdog = wpWatchdog.startPatchWatchdog ?? wpWatchdog.start ?? (() => {});
 
@@ -884,6 +884,7 @@ const server = http.createServer(async (req, res) => {
       if (body.glassColor != null && /^#[0-9a-f]{6}$/i.test(String(body.glassColor))) {
         state.appearance.glassColor = String(body.glassColor).toLowerCase();
       }
+      if (body.filter != null && WALLPAPER_FILTERS.includes(String(body.filter))) state.appearance.filter = String(body.filter);
       saveState();
       return sendJSON(res, 200, state);
     }
@@ -942,6 +943,55 @@ const server = http.createServer(async (req, res) => {
       weAssetsNamesCache.clear();
       saveState();
       return sendJSON(res, 200, { ...state, weAssetsAvailable: weAssetsAvailable(), weAssetsDir: weAssetsDir() });
+    }
+    // ---- 外观预设:出厂七套蒸馏自 dsh-wallpaper-engine 的 glass-presets;自定义存 state ----
+    // 出厂字段的蒸馏口径:上游 glassAlpha 是不透明度百分比,我们 glass 滑杆映射
+    // alpha=96-0.88*glass ⇒ glass=(96-alpha)/0.88;亮度直接映射;饱和度≈滤镜档。
+    // 只动玻璃颜色/透明度/磨砂/亮度/滤镜五个视觉字段,不碰分区透明度/字体/光标。
+    const FACTORY_PRESETS = [
+      { id: 'author',   name: '作者自用', patch: { glassColor: '#0d1524', glass: 64, blur: 9,  brightness: 85,  filter: 'vivid' } },
+      { id: 'hacker',   name: '黑客绿',   patch: { glassColor: '#266d3c', glass: 18, blur: 9,  brightness: 100, filter: 'vivid' } },
+      { id: 'frosted',  name: '重磨砂',   patch: { glassColor: '#ffffff', glass: 58, blur: 36, brightness: 100, filter: 'none' } },
+      { id: 'night',    name: '暗夜釉色', patch: { glassColor: '#0d1524', glass: 41, blur: 22, brightness: 100, filter: 'none' } },
+      { id: 'readable', name: '可读优先', patch: { glassColor: '#ffffff', glass: 64, blur: 24, brightness: 100, filter: 'none' } },
+      { id: 'orig',     name: '原色直出', patch: { glassColor: '#67DCE7', glass: 52, blur: 18, brightness: 100, filter: 'none' } },
+      { id: 'purple',   name: '紫色心情', patch: { glassColor: '#533b78', glass: 18, blur: 9,  brightness: 100, filter: 'vivid' } },
+    ];
+    if (p === '/api/presets' && method === 'GET') {
+      return sendJSON(res, 200, { factory: FACTORY_PRESETS, custom: state.appearancePresets || [], current: state.appearance });
+    }
+    if (p === '/api/presets/apply' && method === 'POST') {
+      const body = JSON.parse((await readBody(req)) || '{}');
+      const f = FACTORY_PRESETS.find((x) => x.id === body.id);
+      const c = (state.appearancePresets || []).find((x) => x.name === body.name);
+      if (f) {
+        Object.assign(state.appearance, f.patch);
+      } else if (c) {
+        // 自定义预设是外观快照:分区透明度/字体/光标/描边/缩放保留现场(存快照时也带着,
+        // 这里再兜一层,避免老快照缺字段把用户调好的分区重置)
+        const keep = ['main', 'row', 'sidebar', 'stroke', 'zoom', 'fontFamily', 'cursor'];
+        const merged = { ...c.appearance };
+        for (const k of keep) if (state.appearance[k] != null) merged[k] = state.appearance[k];
+        state.appearance = merged;
+      } else return sendJSON(res, 404, { error: '没有这个预设' });
+      saveState();
+      return sendJSON(res, 200, state);
+    }
+    if (p === '/api/presets/save' && method === 'POST') {
+      const body = JSON.parse((await readBody(req)) || '{}');
+      const name = String(body.name || '').trim().slice(0, 24);
+      if (!name) return sendJSON(res, 400, { error: '预设名字不能为空' });
+      state.appearancePresets = (state.appearancePresets || []).filter((x) => x.name !== name);
+      state.appearancePresets.push({ name, appearance: { ...state.appearance } });
+      if (state.appearancePresets.length > 12) state.appearancePresets.shift();   // 只留最近 12 个
+      saveState();
+      return sendJSON(res, 200, state);
+    }
+    if (p === '/api/presets/delete' && method === 'POST') {
+      const body = JSON.parse((await readBody(req)) || '{}');
+      state.appearancePresets = (state.appearancePresets || []).filter((x) => x.name !== body.name);
+      saveState();
+      return sendJSON(res, 200, state);
     }
     if (p === '/api/advanced' && method === 'POST') {
       const body = JSON.parse((await readBody(req)) || '{}');

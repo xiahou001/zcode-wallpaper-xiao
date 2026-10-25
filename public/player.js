@@ -250,6 +250,28 @@
     try { f.contentWindow.postMessage({ __we: 1, op: 'pointerLeave' }, '*'); } catch {}
   }, { passive: true });
 
+  // ── 壁纸滤镜(白名单源自 dsh-wallpaper-engine;场景层走引擎 setFilter,其余层走 CSS)──
+  const WALLPAPER_FILTERS = {
+    none: '', blur: 'blur(14px)', grayscale: 'grayscale(1)', sepia: 'sepia(0.75)',
+    vivid: 'saturate(1.6)', warm: 'sepia(0.35) saturate(1.35) brightness(1.05)',
+    cool: 'sepia(0.25) hue-rotate(175deg) saturate(1.3) brightness(1.03)', invert: 'invert(1)',
+    brighten: 'brightness(1.3)', darken: 'brightness(0.72)', contrast: 'contrast(1.35)',
+  };
+  function applyLayerFilter() {
+    const id = (state.appearance && state.appearance.filter) || 'none';
+    const css = WALLPAPER_FILTERS[id] || '';
+    if (!layer) return;
+    let handled = false;
+    try {
+      // 场景层:引擎内建滤镜通道(与渲染管线整合);web 沙箱 iframe 没有 __wp → 走 CSS
+      if (layer.tagName === 'IFRAME' && layer.contentWindow && layer.contentWindow.__wp && layer.contentWindow.__wp.setFilter) {
+        layer.contentWindow.__wp.setFilter(id);
+        handled = true;
+      }
+    } catch (e) { /* 跨源未就绪:CSS 兜底或下轮轮询再试 */ }
+    if (!handled && layer.style) layer.style.filter = css;
+  }
+
   function mountFallback(w) {
     const img = document.createElement('img');
     if (w.preview) img.src = w.preview;
@@ -299,6 +321,7 @@
       }
       runTransition(ms, dismissOld);
       applyPaused();
+      applyLayerFilter();   // 新层就绪立即应用滤镜(场景层走引擎,其它层走 CSS)
       pushSceneMedia();
       propsKey = "";
       applyProps();
@@ -633,6 +656,7 @@
         applyPaused();
         applyVolume();
         applyRotate();
+        applyLayerFilter();   // 外观(滤镜档)变化即时生效
       }
     } catch {} // 服务器暂离:保持当前画面
     pollBusy = false;
