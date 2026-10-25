@@ -328,9 +328,10 @@
     pollLoop();
     setInterval(diag, 60000);
     setTimeout(diag, 5000);                   // 首次诊断避开聊天应用挂载关键期
-    // 窗口从隐藏恢复时立即补一次样式/版本/诊断,隐藏期间的跳过不留空窗
+    // 窗口从隐藏恢复时立即补一次样式/版本/诊断,隐藏期间的跳过不留空窗;
+    // 同时重置重载预算 —— 用户正看着,值得给新一轮自愈机会
     document.addEventListener('visibilitychange', function () {
-      if (!document.hidden) { refreshCss(); pollVersion(); diag(); }
+      if (!document.hidden) { reloadCount = 0; refreshCss(); pollVersion(); diag(); }
     });
     // ── 注入代码自更新 ──
     // embed.js 只在 ZCode 重启时加载,以前每次改注入逻辑都得等用户重启。

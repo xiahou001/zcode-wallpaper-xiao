@@ -583,7 +583,7 @@ function trackProgress(token) {                     // 上限保护,防长期运
   return p;
 }
 function diagRecord(kind, payload) {
-  const entry = { t: Date.now(), kind, ...payload }; diagEntries.push(entry);
+  const entry = { t: Date.now(), kind: String(kind || 'unknown'), ...(payload || {}) }; diagEntries.push(entry);
   if (diagEntries.length > 200) diagEntries.shift();
   try { fs.mkdirSync(APP_DIR, { recursive: true }); fs.appendFileSync(path.join(APP_DIR, 'diag.log'), JSON.stringify(entry) + '\n'); } catch {}
 }

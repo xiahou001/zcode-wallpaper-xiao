@@ -1,22 +1,32 @@
 @echo off
 rem Apply the wallpaper loader to ZCode Desktop.
-rem 稳定性说明:本脚本只做 app.asar 的「等长原位补丁」(自动备份原始字节),
-rem 不再创建 resources/app 影子目录 —— 影子目录会在 ZCode 更新后造成新旧错配。
-rem 若脚本检测到旧的影子目录,会提示你确认后删除(需先关闭 ZCode)。
+rem Strategy: equal-length in-place patch of app.asar only (original bytes auto-backed up).
+rem NEVER creates the resources\app shadow dir (it causes old-frontend-vs-new-backend
+rem mismatch after ZCode updates). A legacy shadow dir is removed ONLY when ZCode is
+rem not running (deleting while running would 404 its lazy-loaded chunks).
+rem NOTE: keep this file pure ASCII - cmd.exe parses .cmd with GBK codepage and
+rem UTF-8 Chinese text breaks command blocks (see git history for details).
 set "ROOT=%~dp0"
 set "NODE=%ProgramFiles%\nodejs\node.exe"
 if not exist "%NODE%" set "NODE=node"
 "%NODE%" "%ROOT%asar-patch-inplace.js"
 if errorlevel 1 exit /b 1
 if exist "%LOCALAPPDATA%\Programs\ZCode\resources\app" (
-  echo.
-  echo 检测到旧的影子目录 resources\app,正在删除(它会在更新后导致新旧错配)…
-  rmdir /s /q "%LOCALAPPDATA%\Programs\ZCode\resources\app" 2>nul
-  if exist "%LOCALAPPDATA%\Programs\ZCode\resources\app" (
-    echo 删除失败:请完全关闭 ZCode 后重新运行本脚本。
+  tasklist /FI "IMAGENAME eq ZCode.exe" 2>nul | find /I "ZCode.exe" >nul
+  if errorlevel 1 (
+    echo.
+    echo Legacy shadow dir resources\app found, ZCode not running - removing...
+    rmdir /s /q "%LOCALAPPDATA%\Programs\ZCode\resources\app" 2>nul
+    if exist "%LOCALAPPDATA%\Programs\ZCode\resources\app" (
+      echo Remove failed - close ZCode completely and run again.
+    ) else (
+      echo Shadow dir removed.
+    )
   ) else (
-    echo 影子目录已删除。
+    echo.
+    echo Shadow dir found but ZCode is RUNNING - skip removal ^(deleting now would 404 lazy assets^).
+    echo Close ZCode completely and run this script again to clean up.
   )
 )
-echo 完成。重启 ZCode 后生效。
+echo Done. Restart ZCode to take effect.
 exit /b 0
