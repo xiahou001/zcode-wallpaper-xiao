@@ -4,7 +4,7 @@ export const DEFAULTS = {
   currentId: null, paused: false, volume: 1,
   rotate: { enabled: false, intervalMin: 30, playlist: null },
   transition: { kind: 'crossfade', ms: 1800 },
-  appearance: { main: 0, row: 52, sidebar: 55, brightness: 100, stroke: 35, zoom: 100, blur: 22, glass: 50, glassColor: '#14161c', fontFamily: '', cursor: '', filter: 'none', fontColor: '', fontColorSidebar: '', fontColorComposer: '', fit: 'cover' },
+  appearance: { main: 0, row: 52, sidebar: 55, brightness: 100, stroke: 35, zoom: 100, blur: 22, glass: 50, glassColor: '#14161c', fontFamily: '', cursor: '', filter: 'none', fontColor: '', fontColorSidebar: '', fontColorComposer: '', fit: 'cover', themeMode: 'auto', accentColor: '' },
   readability: { auto: true }, occlusion: 'hidden', sceneFps: 30, videoFpsCap: 0, playlists: [], workshopDirs: [],
   lyrics: false,        // 在线歌词跑马灯(默认关闭,与 DSH 一致)
   contentFilter: false, // 内容分级过滤:隐藏 R 级壁纸(DSH 功能)
@@ -50,6 +50,12 @@ export function sanitizeState(input = {}) {
     : '';
   // 填充方式(视频/图片层 object-fit 与场景渲染器 fit 参数,源自 DSH 的 objectFit)
   s.appearance.fit = ['cover', 'contain', 'stretch'].includes(s.appearance.fit) ? s.appearance.fit : 'cover';
+  // 主题模式:auto=智能(随壁纸亮度+可读性开关)/dark=强制深色/light=强制浅色
+  s.appearance.themeMode = ['auto', 'dark', 'light'].includes(s.appearance.themeMode) ? s.appearance.themeMode : 'auto';
+  // 强调色(引用/链接等):'' = 自动高对比蓝;'#rrggbb' = 用户指定
+  s.appearance.accentColor = /^#[0-9a-f]{6}$/i.test(String(s.appearance.accentColor || ''))
+    ? String(s.appearance.accentColor).toLowerCase()
+    : '';
   // 自定义外观预设:只保留名字与外观快照,上限 12 个(防状态文件无限膨胀)
   s.appearancePresets = Array.isArray(input.appearancePresets)
     ? input.appearancePresets.slice(0, 12).filter((p) => p && String(p.name || '').trim()).map((p) => ({

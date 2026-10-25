@@ -213,6 +213,37 @@
     parent.appendChild(row);
   }
     function renderLook() {
+      // ── 主题模式(自动=随壁纸亮度;深色/浅色强制)──
+      content.appendChild(el('div', 'sec', '主题模式'));
+      var tmRow = el('div', 'row');
+      [['auto', '● 自动(随壁纸亮度)'], ['dark', '深色'], ['light', '浅色']].forEach(function (p) {
+        var b = el('button', 'btn' + ((state.appearance.themeMode || 'auto') === p[0] ? ' on' : ''), p[1]);
+        b.title = '自动=按壁纸实测亮度智能翻转;深色/浅色=强制整套配色(文字/玻璃基色/强调色联动)';
+        b.onclick = function () { api('/api/appearance', { themeMode: p[0] }).then(function (s) { state = s; render(); }); };
+        tmRow.appendChild(b);
+      });
+      content.appendChild(tmRow);
+      content.appendChild(el('div', 'muted', '自动模式受「智能可读性」开关约束;强制模式立即固定明暗侧,换壁纸不再翻转。'));
+
+      // ── 强调色(引用/链接等;自动=按明暗侧高对比蓝)──
+      content.appendChild(el('div', 'sec', '强调色(引用/链接)'));
+      var acRow = el('div', 'row');
+      var acManual = /^#[0-9a-f]{6}$/i.test(state.appearance.accentColor || '');
+      var acIn = document.createElement('input');
+      acIn.type = 'color';
+      acIn.value = acManual ? state.appearance.accentColor : '#a5b4ff';
+      acIn.title = '引用标题/链接等强调文字的颜色';
+      acIn.style.cssText = 'width:34px;height:26px;padding:0;border:0;background:transparent;cursor:pointer;';
+      acIn.oninput = function () { state.appearance.accentColor = acIn.value; api('/api/appearance', { accentColor: acIn.value }); };
+      acIn.onchange = function () { api('/api/appearance', { accentColor: acIn.value }).then(function (s) { state = s; render(); }); };
+      acRow.appendChild(acIn);
+      var acAuto = el('button', 'btn' + (acManual ? '' : ' on'), acManual ? '手动' : '● 自动(高对比)');
+      acAuto.title = '按明暗侧自动选高对比蓝(WCAG 4.5:1)';
+      acAuto.onclick = function () { api('/api/appearance', { accentColor: '' }).then(function (s) { state = s; render(); }); };
+      acRow.appendChild(acAuto);
+      content.appendChild(acRow);
+      content.appendChild(el('div', 'muted', '自动档保证可读;手动选浅色字配浅底会看不清,属个人选择。'));
+
       // ── 外观预设(出厂七套蒸馏自 dsh-wallpaper-engine;自定义快照存服务器)──
       content.appendChild(el('div', 'sec', '外观预设(源自 dsh-wallpaper-engine 出厂方案)'));
       var presetRow = el('div', 'row');
@@ -241,6 +272,32 @@
           api('/api/presets/save', { name: n }).then(function (s) { state = s; render(); });
         };
         presetRow.appendChild(nameIn); presetRow.appendChild(saveB);
+        // 导出/导入:JSON 经剪贴板/文本框往返,换机迁移或分享用
+        var expB = el('button', 'btn', '导出');
+        expB.title = '把全部自定义预设复制为 JSON(剪贴板)';
+        expB.onclick = function () {
+          api('/api/presets').then(function (pr) {
+            var json = JSON.stringify({ weWallpaperPresets: 1, presets: pr.custom || [] }, null, 2);
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+              navigator.clipboard.writeText(json).then(function () { expB.textContent = '已复制'; setTimeout(function () { expB.textContent = '导出'; }, 1500); });
+            } else { window.prompt('复制以下 JSON:', json); }
+          });
+        };
+        presetRow.appendChild(expB);
+        var impB = el('button', 'btn', '导入');
+        impB.title = '粘贴导出的 JSON,按名合并进自定义预设';
+        impB.onclick = function () {
+          var txt = window.prompt('粘贴预设 JSON:');
+          if (!txt || !txt.trim()) return;
+          var parsed;
+          try { parsed = JSON.parse(txt); } catch (e) { window.alert('JSON 解析失败:' + e.message); return; }
+          api('/api/presets/import', { presets: (parsed && parsed.presets) || parsed || [] }).then(function (r) {
+            impB.textContent = '导入 ' + (r.merged || 0) + ' 条';
+            setTimeout(function () { impB.textContent = '导入'; }, 1800);
+            return loadData();
+          }).then(function () { render(); }).catch(function () {});
+        };
+        presetRow.appendChild(impB);
       }).catch(function () {});
       content.appendChild(presetRow);
       content.appendChild(el('div', 'muted', '点击即应用(玻璃颜色/透明度/磨砂/亮度/滤镜五个字段);不影响分区透明度与字体。调好后可存为自己的预设,最多 12 个。'));
@@ -387,6 +444,15 @@
         b.onclick = function () { api('/api/appearance', p[1]).then(function (s) { state = s; render(); }); };
         presets.appendChild(b);
       });
+      var sp = el('span', null, ''); sp.style.flex = '1';
+      presets.appendChild(sp);
+      var resetB = el('button', 'btn', '↺ 恢复默认外观');
+      resetB.title = '外观九件套(玻璃/文字/滤镜/填充/主题模式/强调色等)全部回出厂;轮播/省电等设置不受影响';
+      resetB.onclick = function () {
+        if (!window.confirm('把全部外观设置恢复为默认?当前外观可先「保存预设」留底。')) return;
+        api('/api/appearance/reset', {}).then(function (s) { state = s; render(); });
+      };
+      presets.appendChild(resetB);
       content.appendChild(presets);
     }
 

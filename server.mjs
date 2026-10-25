@@ -27,7 +27,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { sanitizeState, WALLPAPER_FILTERS } from './settings-schema.js';
+import { sanitizeState, WALLPAPER_FILTERS, DEFAULTS } from './settings-schema.js';
 import wpWatchdog from './watchdog-patch.js';
 import { startCdpInjector } from './cdp-inject.mjs';
 const startPatchWatchdog = wpWatchdog.startPatchWatchdog ?? wpWatchdog.start ?? (() => {});
@@ -1009,6 +1009,12 @@ const server = http.createServer(async (req, res) => {
       if (body.filter != null && WALLPAPER_FILTERS.includes(String(body.filter))) state.appearance.filter = String(body.filter);
       // 填充方式(视频/图片 object-fit 与场景 fit 参数,源自 DSH objectFit)
       if (body.fit != null && ['cover', 'contain', 'stretch'].includes(String(body.fit))) state.appearance.fit = String(body.fit);
+      // 主题模式三档与强调色(白名单/色值校验,非法值静默保持)
+      if (body.themeMode != null && ['auto', 'dark', 'light'].includes(String(body.themeMode))) state.appearance.themeMode = String(body.themeMode);
+      if (body.accentColor != null) {
+        const ac = String(body.accentColor).trim();
+        state.appearance.accentColor = /^#[0-9a-f]{6}$/i.test(ac) ? ac.toLowerCase() : '';
+      }
       // 文字颜色:'' = 回到智能可读性自动;非法色值回自动(不残留异常色)。
       // 分区:fontColor=主区+全局基线,fontColorSidebar=侧栏(空=跟随主区),fontColorComposer=聊天框(空=玻璃对比自动)
       for (const key of ['fontColor', 'fontColorSidebar', 'fontColorComposer']) {
@@ -1017,6 +1023,13 @@ const server = http.createServer(async (req, res) => {
           state.appearance[key] = /^#[0-9a-f]{6}$/i.test(fc) ? fc.toLowerCase() : '';
         }
       }
+      saveState();
+      return sendJSON(res, 200, state);
+    }
+    // 一键恢复默认外观:外观九件套回出厂(滤镜/填充/主题模式/强调色/分区字色全含);
+    // 轮播/省电/歌词等非外观设置不动。恢复前当前值随 state 正常保存,可再存成预设找回。
+    if (p === '/api/appearance/reset' && method === 'POST') {
+      state.appearance = JSON.parse(JSON.stringify(DEFAULTS.appearance));
       saveState();
       return sendJSON(res, 200, state);
     }
@@ -1155,6 +1168,24 @@ const server = http.createServer(async (req, res) => {
       saveState();
       return sendJSON(res, 200, state);
     }
+    // 预设导入:接受导出的 JSON(整个对象或 {presets:[...]}),与现有自定义预设
+    // 按名合并(同名覆盖);逐条走与保存相同的规范化,上限 12 条(超限丢最旧)。
+    if (p === '/api/presets/import' && method === 'POST') {
+      const body = JSON.parse((await readBody(req)) || '{}');
+      const incoming = Array.isArray(body) ? body : Array.isArray(body.presets) ? body.presets : [];
+      let merged = 0;
+      for (const p2 of incoming.slice(0, 24)) {
+        const name = String((p2 && p2.name) || '').trim().slice(0, 24);
+        if (!name) continue;
+        const appearance = { ...DEFAULTS.appearance, ...((p2 && p2.appearance) || {}) };
+        state.appearancePresets = (state.appearancePresets || []).filter((x) => x.name !== name);
+        state.appearancePresets.push({ name, appearance });
+        merged += 1;
+      }
+      if (state.appearancePresets.length > 12) state.appearancePresets = state.appearancePresets.slice(-12);
+      saveState();
+      return sendJSON(res, 200, { merged, custom: state.appearancePresets });
+    }
     if (p === '/api/advanced' && method === 'POST') {
       const body = JSON.parse((await readBody(req)) || '{}');
       if (body.occlusion != null && ['never', 'hidden', 'focus'].includes(body.occlusion)) state.occlusion = body.occlusion;
@@ -1257,7 +1288,10 @@ const server = http.createServer(async (req, res) => {
       // 文字描边滑杆控制全局 text-shadow;界面缩放/亮度热生效。
       const a = state.appearance;
       const lum = luminance == null ? 0.3 : luminance;
-      const lightWall = state.readability.auto && lum > 0.55;   // 壁纸偏亮
+      // 主题模式三档:dark/light 强制明暗侧;auto=智能可读性(随壁纸亮度,且受可读性开关约束)
+      const lightWall = a.themeMode === 'light' ? true
+        : a.themeMode === 'dark' ? false
+        : (state.readability.auto && lum > 0.55);
       const glassDark = (base, alpha) =>
         alpha <= 0 ? 'transparent' : `color-mix(in srgb, ${base} ${alpha}%, transparent)`;
       const rowBase = lightWall ? '#ffffff' : '#14161c';
@@ -1280,9 +1314,9 @@ const server = http.createServer(async (req, res) => {
       const glassLight = hexLum(glassBase) > 0.55;              // 玻璃本身偏亮?
       // 聊天框文字:fontColorComposer 空 = 按玻璃明暗自动(聊天框底色是玻璃,与主区亮度无关)
       const glassFg = a.fontColorComposer || (glassLight ? '#1b1e24' : '#eef1f6');
-      // 强调色/链接文字的可读性:默认蓝(引用标题/链接/强调)在玻璃上对比不足
-      // (实测 ~2.5:1,WCAG 要求 4.5:1),按明暗侧换成高对比蓝并成对给出前景色。
-      const accentFg = lightWall ? '#3b5bdb' : '#a5b4ff';       // 亮壁纸→深蓝 / 暗壁纸→浅蓝紫
+      // 强调色/链接文字:用户指定 accentColor 优先;空 = 按明暗侧自动高对比蓝
+      // (默认蓝在玻璃上实测 ~2.5:1,WCAG 要求 4.5:1),并成对给出强调底色上的文字。
+      const accentFg = a.accentColor || (lightWall ? '#3b5bdb' : '#a5b4ff');
       const accentOn = lightWall ? '#f2f4ff' : '#12151d';       // 强调色作底时的文字(按钮等)
       const shadow = Math.round(a.stroke * 0.5) / 100;
       const css = `
