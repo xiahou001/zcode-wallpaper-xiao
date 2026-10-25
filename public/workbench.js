@@ -303,15 +303,31 @@
       content.appendChild(el('div', 'sec', '字体与光标'));
       var ffRow = el('div', 'row');
       ffRow.appendChild(el('label', null, '界面字体'));
-      var fSel = document.createElement('select');
-      [['', '默认'], ['"Microsoft YaHei", sans-serif', '微软雅黑'], ['"Segoe UI", sans-serif', 'Segoe UI'], ['Consolas, monospace', 'Consolas'], ['KaiTi, serif', '楷体'], ['"Microsoft YaHei UI Light", sans-serif', '雅黑 Light']].forEach(function (p) {
-        var o = document.createElement('option'); o.value = p[0]; o.textContent = p[1];
-        if ((state.appearance.fontFamily || '') === p[0]) o.selected = true;
-        fSel.appendChild(o);
+      var fIn = document.createElement('input');
+      fIn.type = 'text';
+      fIn.placeholder = '输入或从本机字体中选择…';
+      fIn.style.flex = '1';
+      fIn.value = state.appearance.fontFamily || '';
+      // 系统字体清单(源自 DSH system-fonts:宿主枚举、界面只信回包)+ 常用预设
+      var fdl = document.createElement('datalist'); fdl.id = 'we-fonts';
+      [['"Microsoft YaHei", sans-serif', '微软雅黑'], ['Consolas, monospace', 'Consolas'], ['KaiTi, serif', '楷体']].forEach(function (p) {
+        var o = document.createElement('option'); o.value = p[0]; o.label = p[1]; fdl.appendChild(o);
       });
-      fSel.onchange = function () { api('/api/appearance', { fontFamily: fSel.value }).then(function (s) { state = s; render(); }); };
-      ffRow.appendChild(fSel);
+      api('/api/fonts').then(function (r) {
+        (r.fonts || []).forEach(function (n) {
+          var o = document.createElement('option'); o.value = '"' + n + '"'; fdl.appendChild(o);
+        });
+      }).catch(function () {});
+      fIn.setAttribute('list', 'we-fonts');
+      fIn.onchange = function () { api('/api/appearance', { fontFamily: fIn.value.trim() }).then(function (s) { state = s; render(); }); };
+      ffRow.appendChild(fIn);
+      var fDef = el('button', 'btn', '默认');
+      fDef.title = '清空自定义字体,回到系统默认';
+      fDef.onclick = function () { api('/api/appearance', { fontFamily: '' }).then(function (s) { state = s; render(); }); };
+      ffRow.appendChild(fDef);
       content.appendChild(ffRow);
+      content.appendChild(fdl);
+      content.appendChild(el('div', 'muted', '支持任意字体族写法(如 "Microsoft YaHei", sans-serif);下拉列出本机全部已装字体,取不到清单时仍可手输。'));
       var curRow = el('div', 'row');
       curRow.appendChild(el('label', null, '光标样式'));
       var cSel = document.createElement('select');
@@ -327,6 +343,16 @@
       content.appendChild(el('div', 'sec', '壁纸与界面'));
       slider(content, '壁纸亮度', state.appearance.brightness, 50, 160, function (v) { state.appearance.brightness = v; api('/api/appearance', { brightness: v }); });
       slider(content, '界面缩放', state.appearance.zoom, 80, 140, function (v) { state.appearance.zoom = v; api('/api/appearance', { zoom: v }); });
+      // 填充方式(源自 DSH objectFit):视频/图片 object-fit + 场景渲染器 fit
+      var fitRow = el('div', 'row');
+      fitRow.appendChild(el('label', null, '填充方式'));
+      [['cover', '铺满(裁边)'], ['contain', '完整显示(留边)'], ['stretch', '拉伸填满']].forEach(function (p) {
+        var b = el('button', 'btn' + ((state.appearance.fit || 'cover') === p[0] ? ' on' : ''), p[1]);
+        b.title = '壁纸画面的填充方式;改动会在下次切换壁纸时生效';
+        b.onclick = function () { api('/api/appearance', { fit: p[0] }).then(function (s) { state = s; render(); }); };
+        fitRow.appendChild(b);
+      });
+      content.appendChild(fitRow);
       slider(content, '聊天框磨砂(blur)', state.appearance.blur, 0, 40, function (v) { state.appearance.blur = v; api('/api/appearance', { blur: v }); });
       // 聊天框玻璃颜色:与 ZCode 的 Wallpaper Engine 设置页同一形式(色板 + 自定义取色)
       var swRow = el('div', 'row');
@@ -480,9 +506,21 @@
         if ((state.transition.kind || 'crossfade') === p[0]) o.selected = true;
         ksel.appendChild(o);
       });
-      ksel.onchange = function () { api('/api/transition', { kind: ksel.value, ms: state.transition.ms }).then(function (s) { state = s; render(); }); };
+      ksel.onchange = function () { api('/api/transition', { kind: ksel.value, ms: state.transition.ms, dir: state.transition.dir || 'left' }).then(function (s) { state = s; render(); }); };
       kindRow.appendChild(ksel);
       content.appendChild(kindRow);
+      // 过场方向(源自 DSH switchTransitionDir):对推移/擦除生效
+      var dirRow = el('div', 'row');
+      dirRow.appendChild(el('label', null, '过场方向'));
+      var dsel = document.createElement('select');
+      [['left', '从右进入'], ['right', '从左进入'], ['up', '从下进入'], ['down', '从上进入']].forEach(function (p) {
+        var o = document.createElement('option'); o.value = p[0]; o.textContent = p[1];
+        if ((state.transition.dir || 'left') === p[0]) o.selected = true;
+        dsel.appendChild(o);
+      });
+      dsel.onchange = function () { api('/api/transition', { kind: state.transition.kind, ms: state.transition.ms, dir: dsel.value }).then(function (s) { state = s; render(); }); };
+      dirRow.appendChild(dsel);
+      content.appendChild(dirRow);
       content.appendChild(el('div', 'muted', '换壁纸时按所选过场切换,当前 ' + state.transition.ms + ' ms'));
 
       content.appendChild(el('div', 'sec', '省电(源自 dsh-wallpaper-engine)'));
@@ -511,6 +549,13 @@
         occRow.appendChild(b);
       });
       content.appendChild(occRow);
+      // 电池省电(源自 DSH pauseOnBattery):用电池且未充电时自动暂停
+      var batRow = el('div', 'row');
+      var bat = el('button', 'btn' + (state.batteryPause ? ' on' : ''), state.batteryPause ? '● 电池供电自动暂停已开启' : '○ 电池供电自动暂停已关闭');
+      bat.title = '笔记本用电池且未充电时自动暂停壁纸(台式机无电池,开关等于不存在)';
+      bat.onclick = function () { api('/api/advanced', { batteryPause: !state.batteryPause }).then(function (s) { state = s; render(); }); };
+      batRow.appendChild(bat);
+      content.appendChild(batRow);
       content.appendChild(el('div', 'muted', '场景帧率改动在下次切换壁纸时生效;遮挡暂停对视频与场景壁纸同时生效。'));
 
       content.appendChild(el('div', 'sec', '媒体集成(源自 dsh-wallpaper-engine)'));

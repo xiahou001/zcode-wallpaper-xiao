@@ -95,7 +95,7 @@
     const muted = effectiveMuted();
     const fps = state.sceneFps || 30;
     const src = '/wallpaper-engine/scene-live/index.html'
-      + '?type=scene&fit=cover&sceneFps=' + fps
+      + '?type=scene&fit=' + effFit() + '&sceneFps=' + fps
       + '&muted=' + (muted ? 'true' : 'false')
       + '&src=' + encodeURIComponent(w.sceneBase)
       + '&mediaBase=' + encodeURIComponent(location.origin + '/scene-files')
@@ -164,6 +164,10 @@
     }, 1000);
   }
 
+    // ── 填充方式(源自 DSH objectFit):视频/图片层走 object-fit,场景层走渲染器 fit 参数 ──
+  const effFit = () => (state.appearance && state.appearance.fit) || 'cover';
+  let mountedFit = null;   // 填充方式变了要重挂当前壁纸(场景层的 fit 在页面加载时读取)
+
   function mountVideo(w) {
     const v = document.createElement('video');
     v.loop = true;
@@ -171,6 +175,7 @@
     v.autoplay = true;
     v.playsInline = true;
     v.src = w.mediaUrl;
+    v.style.objectFit = effFit();
     v.className = 'layer-enter';
     v.addEventListener('loadeddata', () => {
       recoveryAttempts = 0;
@@ -195,9 +200,10 @@
     mountedId = w.id;
   }
 
-  function mountImage(w) {
+    function mountImage(w) {
     const img = document.createElement('img');
     img.src = w.mediaUrl;
+    img.style.objectFit = effFit();
     img.className = 'layer-enter';
     img.addEventListener('load', () => { const cb = onLayerReady; onLayerReady = null; if (cb) cb(); });
     stage.appendChild(img);
@@ -275,6 +281,7 @@
   function mountFallback(w) {
     const img = document.createElement('img');
     if (w.preview) img.src = w.preview;
+    img.style.objectFit = effFit();
     img.className = 'layer-enter';
     stage.appendChild(img);
     layer = img;
@@ -291,10 +298,11 @@
       document.title = '动态壁纸';
       return;
     }
-    if (w.id === mountedId) return;
+    if (w.id === mountedId && effFit() === mountedFit) return;   // 同壁纸且填充方式没变:跳过
     // 恢复重试路径不清零计数(否则 attempt 恒为 1,永远到不了视频/预览降级)
     if (!suppressRecoveryReset) recoveryAttempts = 0;
     suppressRecoveryReset = false;
+    mountedFit = effFit();
     clearTimeout(recoveryTimer);
     const ms = state.transition ? (state.transition.ms || 0) : 0;
     // 帧门控(DSH「没画面就不上屏」):旧层先留着,新层首帧就绪才交叉淡化;
@@ -344,6 +352,7 @@
   function runTransition(ms, dismissOld) {
     const tr = state.transition || {};
     const kind = ms > 0 ? (tr.kind || "crossfade") : "none";
+    const dir = tr.dir || "left";   // 新层进入方向(上游 switchTransitionDir 口径:左=从右滑入)
     const newL = layer;
     if (!newL) return;
     const ease = "cubic-bezier(.4,0,.2,1)";
@@ -353,14 +362,18 @@
     switch (kind) {
       case "push": {
         newL.style.zIndex = "2";
-        try { newL.animate([{ transform: "translateX(100%)" }, { transform: "translateX(0%)" }], { duration: ms, easing: ease, fill: "forwards" }); } catch {}
-        if (old) { try { old.style.zIndex = "1"; old.animate([{ transform: "translateX(0%)", opacity: 1 }, { transform: "translateX(-28%)", opacity: 0.6 }], { duration: ms, easing: ease, fill: "forwards" }); } catch {} }
+        const inT = { left: "translate3d(100%,0,0)", right: "translate3d(-100%,0,0)", up: "translate3d(0,100%,0)", down: "translate3d(0,-100%,0)" }[dir] || "translate3d(100%,0,0)";
+        const outT = { left: "translate3d(-28%,0,0)", right: "translate3d(28%,0,0)", up: "translate3d(0,-28%,0)", down: "translate3d(0,28%,0)" }[dir] || "translate3d(-28%,0,0)";
+        try { newL.animate([{ transform: inT }, { transform: "translate3d(0,0,0)" }], { duration: ms, easing: ease, fill: "forwards" }); } catch {}
+        if (old) { try { old.style.zIndex = "1"; old.animate([{ transform: "translate3d(0,0,0)", opacity: 1 }, { transform: outT, opacity: 0.6 }], { duration: ms, easing: ease, fill: "forwards" }); } catch {} }
         setTimeout(() => { dismissOld(); newL.style.transform = "none"; newL.style.zIndex = "1"; applyPaused(); pushSceneMedia(); }, ms + 60);
         return;
       }
       case "wipe": {
+        // 揭示从新层的进入缘开始:左=从右缘向左展开,右=从左缘向右,上=从下缘向上,下=从上缘向下
         newL.style.zIndex = "2";
-        try { newL.animate([{ clipPath: "inset(0 100% 0 0)" }, { clipPath: "inset(0 0% 0 0)" }], { duration: ms, easing: ease, fill: "forwards" }); } catch {}
+        const inC = { left: "inset(0 0 0 100%)", right: "inset(0 100% 0 0)", up: "inset(100% 0 0 0)", down: "inset(0 0 100% 0)" }[dir] || "inset(0 0 0 100%)";
+        try { newL.animate([{ clipPath: inC }, { clipPath: "inset(0 0 0 0)" }], { duration: ms, easing: ease, fill: "forwards" }); } catch {}
         setTimeout(() => { dismissOld(); newL.style.clipPath = "none"; newL.style.zIndex = "1"; applyPaused(); pushSceneMedia(); }, ms + 60);
         return;
       }
@@ -411,13 +424,28 @@
     try { layer.contentWindow.postMessage(Object.assign({ __we: 1, op: op }, extra || {}), '*'); } catch {}
   }
 
+  // 电池状态(源自 DSH pauseOnBattery):getBattery 不可用(台式机/部分环境)时
+  // 静默不触发 —— 开关等于不存在,不会报错。
+  var battery = null;
+  try {
+    if (typeof navigator.getBattery === 'function') {
+      navigator.getBattery().then(function (bm) {
+        battery = bm;
+        bm.addEventListener('chargingchange', function () { applyPaused(); });
+        applyPaused();   // 初始化时就在电池上:立即暂停
+      }).catch(function () {});
+    }
+  } catch (e) {}
+
   function applyPaused() {
     if (!layer || !current() || current().id !== mountedId) return;
     // 遮挡暂停三档:never=仅手动;hidden=切走/最小化;focus=失焦即停(省电)
     var occluded = state.occlusion === 'hidden' ? document.hidden
       : state.occlusion === 'focus' ? (document.hidden || !document.hasFocus())
       : false;
-    const paused = state.paused || occluded;
+    // 电池省电(DSH pauseOnBattery):用电池且未充电时自动暂停
+    var onBattery = state.batteryPause && battery && battery.charging === false;
+    const paused = state.paused || occluded || onBattery;
     const kind = layerKind();
     try {
       if (kind === 'scene') {

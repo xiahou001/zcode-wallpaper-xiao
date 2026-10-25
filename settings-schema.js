@@ -4,11 +4,12 @@ export const DEFAULTS = {
   currentId: null, paused: false, volume: 1,
   rotate: { enabled: false, intervalMin: 30, playlist: null },
   transition: { kind: 'crossfade', ms: 1800 },
-  appearance: { main: 0, row: 52, sidebar: 55, brightness: 100, stroke: 35, zoom: 100, blur: 22, glass: 50, glassColor: '#14161c', fontFamily: '', cursor: '', filter: 'none', fontColor: '', fontColorSidebar: '', fontColorComposer: '' },
+  appearance: { main: 0, row: 52, sidebar: 55, brightness: 100, stroke: 35, zoom: 100, blur: 22, glass: 50, glassColor: '#14161c', fontFamily: '', cursor: '', filter: 'none', fontColor: '', fontColorSidebar: '', fontColorComposer: '', fit: 'cover' },
   readability: { auto: true }, occlusion: 'hidden', sceneFps: 30, videoFpsCap: 0, playlists: [], workshopDirs: [],
   lyrics: false,        // 在线歌词跑马灯(默认关闭,与 DSH 一致)
   contentFilter: false, // 内容分级过滤:隐藏 R 级壁纸(DSH 功能)
   weAssetsDir: null,    // WE 官方素材目录(手动覆盖;null=自动探测 Steam 库,localAssets 功能)
+  batteryPause: false,  // 电池供电时自动暂停(源自 DSH pauseOnBattery;仅笔记本有效)
 };
 const num = (v, min, max, fallback) => { const n = Number(v); return Number.isFinite(n) ? Math.max(min, Math.min(max, n)) : fallback; };
 // 壁纸滤镜白名单(与 player.js 的 WALLPAPER_FILTERS 一一对应)
@@ -24,6 +25,8 @@ export function sanitizeState(input = {}) {
   s.transition.ms = num(s.transition.ms, 0, 8000, 1800);
   const KINDS = ['none','crossfade','push','wipe','iris','zoom','blinds'];
   s.transition.kind = KINDS.includes(s.transition.kind) ? s.transition.kind : (s.transition.ms ? 'crossfade' : 'none');
+  // 过场方向(源自 DSH switchTransitionDir):新层从哪个方向进入(左=从右滑入)
+  s.transition.dir = ['left','right','up','down'].includes(s.transition.dir) ? s.transition.dir : 'left';
   s.appearance = { ...DEFAULTS.appearance, ...(input.appearance || {}) };
   for (const k of ['main','row','sidebar','stroke']) s.appearance[k] = num(s.appearance[k], 0, 100, DEFAULTS.appearance[k]);
   s.appearance.brightness = num(s.appearance.brightness, 40, 160, 100);
@@ -45,6 +48,8 @@ export function sanitizeState(input = {}) {
   s.appearance.fontColorComposer = /^#[0-9a-f]{6}$/i.test(String(s.appearance.fontColorComposer || ''))
     ? String(s.appearance.fontColorComposer).toLowerCase()
     : '';
+  // 填充方式(视频/图片层 object-fit 与场景渲染器 fit 参数,源自 DSH 的 objectFit)
+  s.appearance.fit = ['cover', 'contain', 'stretch'].includes(s.appearance.fit) ? s.appearance.fit : 'cover';
   // 自定义外观预设:只保留名字与外观快照,上限 12 个(防状态文件无限膨胀)
   s.appearancePresets = Array.isArray(input.appearancePresets)
     ? input.appearancePresets.slice(0, 12).filter((p) => p && String(p.name || '').trim()).map((p) => ({
@@ -63,6 +68,7 @@ export function sanitizeState(input = {}) {
   s.workshopDirs = Array.isArray(input.workshopDirs) ? input.workshopDirs.map(String).filter(Boolean) : [];
   s.lyrics = Boolean(input.lyrics);
   s.contentFilter = Boolean(input.contentFilter);
+  s.batteryPause = Boolean(input.batteryPause);   // 电池供电自动暂停(DSH pauseOnBattery)
   s.videoFpsCap = [0, 15, 30, 60].includes(Number(input.videoFpsCap)) ? Number(input.videoFpsCap) : 0;   // 视频壁纸帧率上限(0=无限制,超上限自动转码)
   // WE 素材目录:只存路径字符串,可用性(含 materials/ 子目录)由服务器在用时探测;
   // 非法形态一律回落 null(= 自动探测),绝不因手工填错路径卡死状态保存。

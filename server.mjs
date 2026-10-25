@@ -707,6 +707,33 @@ setInterval(function () {
   }
 }, 10 * 60 * 1000).unref();
 const reqlog = (line) => { REQLOG.push(new Date().toISOString().slice(11, 23) + ' ' + line); if (REQLOG.length > 200) REQLOG.shift(); };
+// ── 系统字体清单(源自 dsh-wallpaper-engine system-fonts.js 的「宿主枚举、客户端只信回包」)──
+// PowerShell 的 System.Drawing InstalledFontCollection 枚举本机族名;10 分钟缓存;失败回旧值或空。
+let fontCache = { names: null, at: 0 };
+let fontsBusy = false;
+function systemFonts() {
+  return new Promise((resolve) => {
+    if (fontCache.names && Date.now() - fontCache.at < 600_000) return resolve(fontCache.names);
+    if (fontsBusy) return resolve(fontCache.names || []);
+    if (process.platform !== 'win32') return resolve([]);
+    fontsBusy = true;
+    execFile('powershell.exe', ['-NoProfile', '-Command',
+      'Add-Type -AssemblyName System.Drawing; [System.Drawing.Text.InstalledFontCollection]::new().Families.Name | ConvertTo-Json -Compress'],
+      { timeout: 20000, maxBuffer: 4e6, windowsHide: true }, (err, stdout) => {
+        fontsBusy = false;
+        let names = [];
+        if (!err && stdout && stdout.trim()) {
+          try {
+            const j = JSON.parse(stdout.trim());
+            names = (Array.isArray(j) ? j : [j]).filter((x) => typeof x === 'string' && x.trim());
+          } catch {}
+        }
+        if (names.length) fontCache = { names, at: Date.now() };
+        resolve(names.length ? names : (fontCache.names || []));
+      });
+  });
+}
+
 const server = http.createServer(async (req, res) => {
   const u = new URL(req.url || '/', 'http://x');
   const p = decodeURIComponent(u.pathname);
@@ -863,10 +890,13 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === '/api/transition' && method === 'POST') {
       const body = JSON.parse((await readBody(req)) || '{}');
-      const ms = Math.max(0, Math.min(8000, Number(body.ms) || 0));
+      // ms/kind/dir 任一缺省都保留现有值:单字段的调用不该重置其它两项
+      const ms = Math.max(0, Math.min(8000, Number(body.ms != null ? body.ms : (state.transition.ms || 0)) || 0));
       const KINDS = ['none', 'crossfade', 'push', 'wipe', 'iris', 'zoom', 'blinds'];
-      const kind = KINDS.includes(body.kind) ? body.kind : (ms > 0 ? 'crossfade' : 'none');
-      state.transition = { kind, ms };
+      const kind = KINDS.includes(body.kind) ? body.kind
+        : (ms > 0 ? (KINDS.includes(state.transition.kind) && state.transition.kind !== 'none' ? state.transition.kind : 'crossfade') : 'none');
+      const dir = ['left', 'right', 'up', 'down'].includes(body.dir) ? body.dir : (['left', 'right', 'up', 'down'].includes(state.transition.dir) ? state.transition.dir : 'left');
+      state.transition = { kind, ms, dir };
       saveState();
       return sendJSON(res, 200, state);
     }
@@ -885,6 +915,8 @@ const server = http.createServer(async (req, res) => {
         state.appearance.glassColor = String(body.glassColor).toLowerCase();
       }
       if (body.filter != null && WALLPAPER_FILTERS.includes(String(body.filter))) state.appearance.filter = String(body.filter);
+      // 填充方式(视频/图片 object-fit 与场景 fit 参数,源自 DSH objectFit)
+      if (body.fit != null && ['cover', 'contain', 'stretch'].includes(String(body.fit))) state.appearance.fit = String(body.fit);
       // 文字颜色:'' = 回到智能可读性自动;非法色值回自动(不残留异常色)。
       // 分区:fontColor=主区+全局基线,fontColorSidebar=侧栏(空=跟随主区),fontColorComposer=聊天框(空=玻璃对比自动)
       for (const key of ['fontColor', 'fontColorSidebar', 'fontColorComposer']) {
@@ -908,6 +940,12 @@ const server = http.createServer(async (req, res) => {
       luminance = Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : null;
       return sendJSON(res, 200, { v: luminance });
     }
+    // ---- 系统字体清单(工作台字体下拉的数据源;宿主枚举,失败回空由界面提示)----
+    if (p === '/api/fonts' && method === 'GET') {
+      const fonts = await systemFonts();
+      return sendJSON(res, 200, { fonts });
+    }
+
     // ---- WE 官方素材通路(消费面,契约对齐上游 renderer/src/local-assets.ts)----
     // 四种请求形:GET /api/local-assets → {ok,roots};
     //   /local/materials/index.json → {names};/local/<rel> → 贴图字节(围栏内,只读)。
@@ -1006,6 +1044,7 @@ const server = http.createServer(async (req, res) => {
       if (body.occlusion != null && ['never', 'hidden', 'focus'].includes(body.occlusion)) state.occlusion = body.occlusion;
       if (body.sceneFps != null) state.sceneFps = [15, 30, 60].includes(Number(body.sceneFps)) ? Number(body.sceneFps) : state.sceneFps;
       if (body.lyrics != null) state.lyrics = !!body.lyrics;
+      if (body.batteryPause != null) state.batteryPause = !!body.batteryPause;   // 电池供电自动暂停(DSH pauseOnBattery)
       if (body.videoFpsCap != null) state.videoFpsCap = [0, 15, 30, 60].includes(Number(body.videoFpsCap)) ? Number(body.videoFpsCap) : state.videoFpsCap;
       if (body.contentFilter != null) state.contentFilter = !!body.contentFilter;
       saveState();
