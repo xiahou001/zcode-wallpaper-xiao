@@ -29,4 +29,8 @@ If Not ServerReady() Then
     If ServerReady() Then Exit For
   Next
 End If
-If fso.FileExists(zcodeExe) Then shell.Run Q(zcodeExe), 1, False
+If fso.FileExists(zcodeExe) Then
+  ' --remote-debugging-port:壁纸注入的 CDP 轨道(只绑 127.0.0.1,零改安装文件);
+  ' 壁纸服务器检测到该端口即自动挂入壁纸层。不带此参数启动时回落 asar 补丁轨道。
+  shell.Run Q(zcodeExe) & " --remote-debugging-port=9333", 1, False
+End If

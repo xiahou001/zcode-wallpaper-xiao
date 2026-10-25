@@ -29,6 +29,7 @@ import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { sanitizeState, WALLPAPER_FILTERS } from './settings-schema.js';
 import wpWatchdog from './watchdog-patch.js';
+import { startCdpInjector } from './cdp-inject.mjs';
 const startPatchWatchdog = wpWatchdog.startPatchWatchdog ?? wpWatchdog.start ?? (() => {});
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -808,7 +809,7 @@ const server = http.createServer(async (req, res) => {
     }
     // 样式版本(embed.css 热更新探针):任何状态写入推进;客户端变了才重取 CSS
     if (p === '/api/style-version') return sendJSON(res, 200, { v: stateVersion });
-    if (p === '/api/diag-log') return sendJSON(res, 200, { entries: diagEntries.slice(-80), reqlog: REQLOG.slice(-60) });
+    if (p === '/api/diag-log') return sendJSON(res, 200, { entries: diagEntries.slice(-80), reqlog: REQLOG.slice(-60), cdp: cdpInjector.status() });
     if (p === '/api/scene-progress') {
       const token = String(u.searchParams.get('token') || '');
       return sendJSON(res, 200, sceneProgressSnapshot(token));
@@ -1468,6 +1469,13 @@ server.listen(PORT, '127.0.0.1', () => {
 scheduleRotation();
 startNowPlayingPoller();
 startPatchWatchdog();
+// CDP 注入轨道(零改文件):ZCode 经 launch-zcode.vbs 带 --remote-debugging-port=9333
+// 启动时,这里自动把 bootstrap 挂进聊天窗口。端口没人听时轮询空转,无副作用;
+// 与 asar 补丁轨道经 bootstrap 的幂等闸共存,先到先得。
+const cdpInjector = startCdpInjector({
+  port: Number(process.env.WE_CDP_PORT || 9333),
+  log: (m) => diagRecord(m),
+});
 sweepStaleCacheOnBoot();   // 指纹命名升级前留下的旧变体一次性回收
 sweepMediaCache();         // 启动先过一遍预算
 warmFaststartOnBoot();     // 轮换列表视频预热 moov 前置(后台串行,不阻塞服务)

@@ -65,7 +65,14 @@ cscript //nologo install-autostart.vbs
 > ⚠️ 此操作修改本地客户端资源(原文件不被改动、随时可恢复),属非官方玩法,应用更新后需重跑一遍。请自担风险。
 
 ```cmd
-apply.cmd     rem 解包 resources/app + 注入壁纸层加载器(幂等,可重复执行)
+推荐:用 launch-zcode.vbs 启动 ZCode(CDP 注入轨道,零改文件)
+```cmd
+wscript launch-zcode.vbs   rem 先拉起壁纸服务器,再带 --remote-debugging-port=9333 启动 ZCode
+```
+CDP 轨道(主):ZCode 带 `--remote-debugging-port` 启动(只绑 127.0.0.1),壁纸服务器检测到端口即经 Chrome DevTools Protocol 把加载器挂进聊天窗口 —— **不修改 ZCode 任何文件**,应用更新天然免疫,也不受 Electron asar 完整性校验影响。
+
+asar 原位补丁(后备):直接启动 ZCode(不带调试端口)时的回落轨道;
+```cmd
 restore.cmd   rem 一键恢复原生界面
 ```
 
@@ -79,6 +86,8 @@ restore.cmd   rem 一键恢复原生界面
 - Scene 失败时按实时 WebGL → scene.pkg 内嵌 MP4 → preview 图顺序降级。
 - `/api/diag-log` 和 `/api/scene-progress` 提供渲染错误、目录围栏、客户端恢复和大包传输状态。
 - `settings-schema.js` 统一校验状态范围，避免 state.json 中的异常值导致播放器启动失败。
+
+两条轨道经 bootstrap 的幂等闸共存,先到先得、不会重复注入。CDP 轨道在 `/api/diag-log` 的 `cdp` 字段可查看挂载状态。
 
 如果刚更新过注入逻辑，请完全退出 ZCode 后重新打开一次，让新的 `bootstrap.js` 注入生效。
 

@@ -16,6 +16,41 @@ const ASAR = path.join(ZCODE_DIR, 'resources', 'app.asar');
 const BACKUP_DIR = path.join(require('os').homedir(), '.we-wallpaper', 'asar-backup');
 
 const fd = fs.openSync(ASAR, 'r');
+
+// ── fuse 安全闸:ZCode.exe 若开启 asar 完整性校验,改写 asar 会让客户端拒绝启动 ──
+// 读 Electron fuse 线(哨兵串后的字节;老格式 0/1/2,新格式 ASCII '0'/'1'/' ')。
+// 只认「明确开启」;读不出/不含哨兵(老 Electron)一律放行。
+function asarIntegrityEnabled() {
+  try {
+    const exe = path.join(ZCODE_DIR, 'ZCode.exe');
+    const est = fs.statSync(exe);
+    const SENT = Buffer.from('dL7pKGdnNz796PbbjQWNKmHXBZaB9tsX');
+    const CH = 4 * 1024 * 1024;
+    const efd = fs.openSync(exe, 'r');
+    const buf = Buffer.alloc(CH + SENT.length);
+    let pos = 0, found = -1;
+    while (pos < est.size && found < 0) {
+      const n = fs.readSync(efd, buf, 0, Math.min(buf.length, est.size - pos), pos);
+      if (n <= 0) break;
+      const i = buf.slice(0, n).indexOf(SENT);
+      if (i >= 0) { found = pos + i; break; }
+      pos += CH - SENT.length;
+    }
+    if (found < 0) { fs.closeSync(efd); return false; }
+    const tail = Buffer.alloc(48);
+    fs.readSync(efd, tail, 0, 48, found + SENT.length);
+    fs.closeSync(efd);
+    // fuse[4] = EnableEmbeddedAsarIntegrityValidation(顺序按 Electron 1.9 线序)
+    const b = tail[2 + 4];
+    return b === 1 || b === 0x31;   // 二进制 1 或 ASCII '1'
+  } catch { return false; }
+}
+if (asarIntegrityEnabled()) {
+  console.error('FUSE GUARD: ZCode 已开启 asar 完整性校验,改写 app.asar 会导致客户端拒绝启动。');
+  console.error('请改用 CDP 注入轨道:用 launch-zcode.vbs 启动 ZCode(自动带 --remote-debugging-port),零改文件。');
+  process.exit(1);
+}
+
 const probe = Buffer.alloc(64);
 fs.readSync(fd, probe, 0, 64, 0);
 const jsonSize = probe.readUInt32LE(12);
