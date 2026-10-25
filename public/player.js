@@ -175,6 +175,7 @@
     v.autoplay = true;
     v.playsInline = true;
     v.src = w.mediaUrl;
+    v.preload = 'auto';   // 立即开始缓冲,首帧等待更短(metadata 会等播放器自己决定)
     v.style.objectFit = effFit();
     v.className = 'layer-enter';
     v.addEventListener('loadeddata', () => {
@@ -203,6 +204,7 @@
     function mountImage(w) {
     const img = document.createElement('img');
     img.src = w.mediaUrl;
+    img.decoding = 'async';   // 不阻塞主线程解码,大图首帧更顺
     img.style.objectFit = effFit();
     img.className = 'layer-enter';
     img.addEventListener('load', () => { const cb = onLayerReady; onLayerReady = null; if (cb) cb(); });
@@ -337,7 +339,6 @@
     previewLuminance(w);   // 切换瞬间:按预览图亮度立即翻转文字色(实测帧随后精修)
     $('hud-title').textContent = w.title;
     document.title = w.title + ' · 动态壁纸';
-    document.title = w.title + ' · 动态壁纸';
     if (w.playable && w.type === 'scene') mountScene(w);
     else if (w.playable && w.type === 'video') mountVideo(w);
     else if (w.playable && w.type === 'image') mountImage(w);
@@ -358,7 +359,6 @@
     const ease = "cubic-bezier(.4,0,.2,1)";
     const finish = () => { dismissOld(); newL.style.zIndex = "1"; newL.style.opacity = "1"; newL.style.clipPath = "none"; newL.style.maskImage = "none"; newL.style.webkitMaskImage = "none"; newL.style.transform = "none"; applyPaused(); pushSceneMedia(); };
     const anim = (frames, opts) => { try { return newL.animate(frames, Object.assign({ duration: ms, easing: ease, fill: "forwards" }, opts || {})); } catch (e) { return null; } };
-    const oldFade = () => { if (!dismissOld) return; };
     switch (kind) {
       case "push": {
         newL.style.zIndex = "2";

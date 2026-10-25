@@ -201,6 +201,9 @@ function scanWallpapers() {
         previewAbs = ['preview.jpg', 'preview.gif', 'preview.png']
           .map((f) => path.join(dir, f)).find((p) => fs.existsSync(p)) || null;
       }
+      // sizeBytes 扫描时一次性取好:旧实现每次 /api/wallpapers 都对每张壁纸
+      // statSync(播放器+工作台+面板合计每 5s 一轮 × 30+ 张),纯浪费。
+      const sizeBytes = (() => { try { return fileAbs ? fs.statSync(fileAbs).size : (mainAbs ? fs.statSync(mainAbs).size : 0); } catch { return 0; } })();
       if (type === 'scene') {
         // 工坊条目常声明 scene.json 却只带打包的 scene.pkg(参考
         // dsh-wallpaper-engine 的 resolveSceneMainFileP):依次探测声明文件、
@@ -215,14 +218,14 @@ function scanWallpapers() {
             if (pkgs.length === 1) mainAbs = path.join(dir, pkgs[0]);
           } catch {}
         }
-        if (mainAbs) list.push({ id, title: proj.title || id, contentrating: rating, type: 'scene', dir, fileAbs: mainAbs, previewAbs, playable: true });
-        else list.push({ id, title: proj.title || id, contentrating: rating, type, dir, fileAbs: null, previewAbs, playable: false });
+        if (mainAbs) list.push({ id, title: proj.title || id, contentrating: rating, type: 'scene', dir, fileAbs: mainAbs, previewAbs, playable: true, sizeBytes });
+        else list.push({ id, title: proj.title || id, contentrating: rating, type, dir, fileAbs: null, previewAbs, playable: false, sizeBytes: 0 });
       } else if (type === 'video' && fileOk) {
-        list.push({ id, title: proj.title || id, contentrating: rating, type: 'video', dir, fileAbs, previewAbs, playable: true });
+        list.push({ id, title: proj.title || id, contentrating: rating, type: 'video', dir, fileAbs, previewAbs, playable: true, sizeBytes });
       } else if (type === 'image' && fileOk) {
-        list.push({ id, title: proj.title || id, contentrating: rating, type: 'image', dir, fileAbs, previewAbs: fileAbs, playable: true });
+        list.push({ id, title: proj.title || id, contentrating: rating, type: 'image', dir, fileAbs, previewAbs: fileAbs, playable: true, sizeBytes });
       } else if (type === 'web' && fileOk) {
-        list.push({ id, title: proj.title || id, contentrating: rating, type: 'web', dir, fileAbs, previewAbs, playable: true });
+        list.push({ id, title: proj.title || id, contentrating: rating, type: 'web', dir, fileAbs, previewAbs, playable: true, sizeBytes });
       } else {
         list.push({ id, title: proj.title || id, contentrating: rating, type, dir, fileAbs: null, previewAbs, playable: false });
       }
@@ -393,13 +396,24 @@ function probeSourceFps(abs) {
     return fps;
   } catch { fpsProbeCache.set(abs, null); return null; }
 }
-// moov 是否已在文件头部(前 2MB 内):在 → 播放器元数据立即可得;不在 → 需要重排
+// moov 是否已在文件头部(前 2MB 内):在 → 播放器元数据立即可得;不在 → 需要重排。
+// 结果按「路径+大小+mtime」缓存:转码/重排在途时浏览器会连发多个 Range 请求,
+// 每个都重复同步读 2MB 头部纯属浪费(缓存上限 128 条,超出整体换血)。
+const moovHeadCache = new Map();
+const MOOV_MAGIC = Buffer.from('moov');
 function moovAtHead(abs) {
   try {
+    const st = fs.statSync(abs);
+    const key = abs + '|' + st.size + '|' + Math.floor(st.mtimeMs);
+    const hit = moovHeadCache.get(key);
+    if (hit !== undefined) return hit;
     const fd = fs.openSync(abs, 'r');
-    const buf = Buffer.alloc(Math.min(2 * 1024 * 1024, fs.statSync(abs).size));
+    const buf = Buffer.alloc(Math.min(2 * 1024 * 1024, st.size));
     try { fs.readSync(fd, buf, 0, buf.length, 0); } finally { fs.closeSync(fd); }
-    return buf.indexOf(Buffer.from('moov')) >= 0;
+    const r = buf.indexOf(MOOV_MAGIC) >= 0;
+    if (moovHeadCache.size > 128) moovHeadCache.clear();
+    moovHeadCache.set(key, r);
+    return r;
   } catch { return true; }
 }
 
@@ -772,7 +786,8 @@ const server = http.createServer(async (req, res) => {
             sceneBase,                                   // scene:渲染页 src 段(其下拼 scene.pkg)
             webEntry: w.type === 'web' && rel ? `/web-live/${w.id}/${rel}` : null,  // web:shim 注入入口
             mediaUrl: (w.type === 'video' || w.type === 'image') && rel ? `/media/${w.id}/${rel}` : null,
-            sizeBytes: (() => { try { return fs.statSync(w.fileAbs).size; } catch { return 0; } })(),
+            // 扫描时缓存的大小(旧实现每次请求逐张 statSync);目录被外部改动时兜底现算
+            sizeBytes: w.sizeBytes != null ? w.sizeBytes : (() => { try { return fs.statSync(w.fileAbs).size; } catch { return 0; } })(),
           };
         }),
         state,
@@ -780,15 +795,19 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === '/api/state') return sendJSON(res, 200, { ...state, luminance, weAssetsAvailable: weAssetsAvailable(), weAssetsDir: weAssetsDir() });
     // 极轻量的版本探针:客户端高频轮询它,变了才去取整份 /embed.css(降低换色的等待)
-    if (p === '/api/version') return sendJSON(res, 200, { v: stateVersion });
+    // 代码指纹版本(播放层据此自刷新):任一前端文件 mtime/size 变化即变,结果缓存。
+    // ⚠ 与 /api/style-version 严格分工:这里绝不能返回 stateVersion —— 旧实现把它
+    // 当代码版本返回,导致工作台每拖一下滑杆(saveState→stateVersion++)嵌入的
+    // 壁纸就整页 location.reload(),既是性能灾难也让动画/播放在调节期间不断重启。
     if (p === '/api/version') {
-      // 注入代码版本指纹:任一前端文件变化即变(播放层据此自刷新)
       let h = 0;
       for (const rel of ['public/player.js', 'public/embed.js', 'public/embed.css', 'public/workbench.js']) {
         try { const st2 = fs.statSync(path.join(__dirname, rel)); h = (h * 31 + st2.size + (st2.mtimeMs % 100000)) >>> 0; } catch (e3) {}
       }
       return sendJSON(res, 200, { v: String(h) });
     }
+    // 样式版本(embed.css 热更新探针):任何状态写入推进;客户端变了才重取 CSS
+    if (p === '/api/style-version') return sendJSON(res, 200, { v: stateVersion });
     if (p === '/api/diag-log') return sendJSON(res, 200, { entries: diagEntries.slice(-80), reqlog: REQLOG.slice(-60) });
     if (p === '/api/scene-progress') {
       const token = String(u.searchParams.get('token') || '');
@@ -937,7 +956,12 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/luminance' && method === 'POST') {
       const body = JSON.parse((await readBody(req)) || '{}');
       const v = Number(body.v);
+      // 亮度翻转(明↔暗)才推进样式版本:文字色/玻璃配色的方向变了,让 embed 端
+      // ~0.4s 内重取 CSS;同侧的细微变化不推 —— 每 5s 一次的采样不该打扰客户端。
+      const sideOf = (x) => (state.readability.auto && x > 0.55);
+      const prevSide = luminance == null ? null : sideOf(luminance);
       luminance = Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : null;
+      if (prevSide !== sideOf(luminance)) stateVersion += 1;
       return sendJSON(res, 200, { v: luminance });
     }
     // ---- 系统字体清单(工作台字体下拉的数据源;宿主枚举,失败回空由界面提示)----
@@ -1114,6 +1138,7 @@ const server = http.createServer(async (req, res) => {
       if (!filename) { res.statusCode = 400; return res.end('filename required'); }
       const ext = path.extname(filename).toLowerCase();
       if (!['.mp4', '.webm', '.mov', '.jpg', '.jpeg', '.png', '.webp', '.gif', '.html', '.htm'].includes(ext)) {
+        req.resume();   // 消费掉请求体再应答,否则客户端可能收到连接重置而非 400
         res.statusCode = 400; return res.end('unsupported file type');
       }
       const type = ['.jpg', '.jpeg', '.png', '.webp', '.gif'].includes(ext) ? 'image'

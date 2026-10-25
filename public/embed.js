@@ -39,7 +39,8 @@
   function pollVersion() {
     if (versionBusy || document.hidden) return;   // 窗口隐藏时跳过,省 CPU 与请求
     versionBusy = true;
-    fetch(BASE + '/api/version', { cache: 'no-store' })
+    // /api/style-version(样式热更新);/api/version 是代码指纹,语义不同,勿混用
+    fetch(BASE + '/api/style-version', { cache: 'no-store' })
       .then(function (r) { return r.json(); })
       .then(function (d) {
         var v = d && d.v;
@@ -62,6 +63,7 @@
   var serverWasDown = true;
   var healthTimer = 0;
   var retryTimer = 0;
+  var reloadCount = 0;   // 连续握手失败重载计数(上限 3,防损坏壁纸的整包重下载黑洞)
   function showFrame() {
     if (!frame) return;
     frame.style.display = 'block';
@@ -76,7 +78,9 @@
     frame.src = BASE + '/?embed=1&recover=' + Date.now();
   }
   function checkServer() {
-    fetch(BASE + '/api/state?health=' + Date.now(), { cache: 'no-store', mode: 'cors' })
+    // 探活用极轻的 style-version 探针(旧实现取整份 /api/state,纯浪费);
+    // 4s 一次 × 多窗口,省下的带宽让首屏内容更快回来。
+    fetch(BASE + '/api/style-version?health=' + Date.now(), { cache: 'no-store', mode: 'cors' })
       .then(function (r) {
         if (!r.ok) throw new Error('server ' + r.status);
         return r.json();
@@ -85,11 +89,17 @@
         var wasDown = serverWasDown;
         serverWasDown = false;
         showFrame();
+        // 握手过期重载带上限:损坏的壁纸连续重载 3 次后停手(每次重载都是整包
+        // 重下载,无限重载=带宽黑洞);服务器重启或窗口重新可见时清零重试。
         var handshakeExpired = frameStartedAt && Date.now() - frameStartedAt > 8000;
-        if (wasDown || !frameLoaded || (handshakeExpired && !frameReady)) reloadFrame();
+        if (wasDown || !frameLoaded || (handshakeExpired && !frameReady && reloadCount < 3)) {
+          reloadCount += 1;
+          reloadFrame();
+        }
       })
       .catch(function () {
         serverWasDown = true;
+        reloadCount = 0;   // 服务器重启过:重载预算重新发
         if (frame) { frameLoaded = false; frame.style.display = 'block'; }
         clearTimeout(retryTimer);
         retryTimer = setTimeout(checkServer, 2000);
@@ -121,6 +131,7 @@
     if (!frame || event.source !== frame.contentWindow || event.origin !== BASE) return;
     if (event.data && event.data.source === 'we-wallpaper' && event.data.type === 'ready') {
       frameReady = true;
+      reloadCount = 0;   // 播放页成功握手:重载预算重置
       showFrame();
     }
   });
