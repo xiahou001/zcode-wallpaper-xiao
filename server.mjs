@@ -700,8 +700,14 @@ function scheduleRotation() {
     const hidden = state.contentFilter ? new Set(['r', 'mature']) : null;
     const pool = inventory.filter((w) => w.playable && !(hidden && hidden.has((w.contentrating || '').toLowerCase())) && (pl ? pl.ids.includes(w.id) : true));
     if (pool.length < 1) return;
-    const idx = pool.findIndex((w) => w.id === state.currentId);
-    state.currentId = pool[(idx + 1) % pool.length].id;
+    if (state.rotate.random && pool.length > 1) {
+      // 随机模式:排除当前张再抽(避免"随机到同一张"空转一轮)
+      const rest = pool.filter((w) => w.id !== state.currentId);
+      state.currentId = rest[Math.floor(Math.random() * rest.length)].id;
+    } else {
+      const idx = pool.findIndex((w) => w.id === state.currentId);
+      state.currentId = pool[(idx + 1) % pool.length].id;
+    }
     state.paused = false;
     saveState();
   }, ms);
@@ -937,6 +943,7 @@ const server = http.createServer(async (req, res) => {
       const body = JSON.parse((await readBody(req)) || '{}');
       state.rotate.enabled = !!body.enabled;
       if (body.intervalMin != null) state.rotate.intervalMin = Math.max(1, Number(body.intervalMin) || 30);
+      if (body.random != null) state.rotate.random = !!body.random;   // 随机轮换(默认顺序)
       saveState();
       scheduleRotation();
       return sendJSON(res, 200, state);

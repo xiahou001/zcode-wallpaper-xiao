@@ -149,7 +149,8 @@ export function startCdpInjector(opts = {}) {
     if (!t.webSocketDebuggerUrl) return;
     let ws;
     try { ws = await new Ws(t.webSocketDebuggerUrl).connect(); } catch (e) { log('cdp-connect-fail ' + e.message); return; }
-    targets.set(t.id, ws);
+    const info = { ws, url: String(t.url || '').slice(0, 70), verified: null };
+    targets.set(t.id, info);
     ws.onClose = () => { targets.delete(t.id); };
     ws.onMessage = (txt) => {
       let m;
@@ -167,7 +168,17 @@ export function startCdpInjector(opts = {}) {
       await ws.call('Page.enable');
       await ws.call('Page.addScriptToEvaluateOnNewDocument', { source: src });   // 未来的每次导航
       await ws.call('Runtime.evaluate', { expression: src });                     // 当前已加载的文档
-      log('cdp-injected ' + (t.title || t.url || t.id).slice(0, 60));
+      log('cdp-injected ' + info.url);
+      // 注入后验证:1.5s 后确认幂等闸标志真的立起来了(不验证的注入等于没验证)
+      setTimeout(() => {
+        if (!targets.has(t.id)) return;
+        ws.call('Runtime.evaluate', { expression: '!!window.__weWpBootstrapV2', returnByValue: true })
+          .then((r) => {
+            info.verified = !!(r && r.result && r.result.value);
+            if (!info.verified) log('cdp-verify-false ' + info.url);
+          })
+          .catch(() => {});
+      }, 1500);
     } catch (e) {
       log('cdp-inject-fail ' + e.message);
       ws.close();
@@ -185,14 +196,21 @@ export function startCdpInjector(opts = {}) {
       if (!urlMatch(t)) continue;
       attach(t);
     }
-    for (const [id, ws] of targets) if (!seen.has(id)) { ws.close(); targets.delete(id); }
+    for (const [id, info] of targets) if (!seen.has(id)) { info.ws.close(); targets.delete(id); }
   }
 
   sweep();
   const timer = setInterval(sweep, pollMs);
   if (timer.unref) timer.unref();
   return {
-    stop() { stopped = true; clearInterval(timer); for (const ws of targets.values()) ws.close(); },
-    status() { return { port, attached: [...targets.keys()] }; },
+    stop() { stopped = true; clearInterval(timer); for (const info of targets.values()) info.ws.close(); },
+    status() {
+      return {
+        port,
+        attached: [...targets.keys()],
+        // 诊断摘要:每目标一行(URL 摘要 + 注入验证结果),挂没挂上/验证没过一眼看清
+        targets: [...targets.entries()].map(([id, info]) => ({ id: id.slice(0, 8), url: info.url, verified: info.verified })),
+      };
+    },
   };
 }

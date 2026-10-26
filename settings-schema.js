@@ -2,7 +2,7 @@
 // Keep this browser/Node safe and dependency-free.
 export const DEFAULTS = {
   currentId: null, paused: false, volume: 1,
-  rotate: { enabled: false, intervalMin: 30, playlist: null },
+  rotate: { enabled: false, intervalMin: 30, playlist: null, random: false },
   transition: { kind: 'crossfade', ms: 1800 },
   appearance: { main: 0, row: 52, sidebar: 55, brightness: 100, stroke: 35, zoom: 100, blur: 22, glass: 50, glassColor: '#14161c', fontFamily: '', cursor: '', filter: 'none', fontColor: '', fontColorSidebar: '', fontColorComposer: '', fit: 'cover', themeMode: 'auto', accentColor: '', flip: false },
   videoRate: 1,         // 视频壁纸播放倍速(0.5~2,源自 DSH playbackRate)
@@ -22,6 +22,7 @@ export function sanitizeState(input = {}) {
   s.rotate = { ...DEFAULTS.rotate, ...(input.rotate || {}) };
   s.rotate.enabled = Boolean(s.rotate.enabled); s.rotate.intervalMin = num(s.rotate.intervalMin, 1, 1440, 30);
   s.rotate.playlist = s.rotate.playlist ? String(s.rotate.playlist) : null;
+  s.rotate.random = Boolean(s.rotate.random);   // 随机轮换(默认顺序)
   s.transition = { ...DEFAULTS.transition, ...(input.transition || {}) };
   s.transition.ms = num(s.transition.ms, 0, 8000, 1800);
   const KINDS = ['none','crossfade','push','wipe','iris','zoom','blinds'];

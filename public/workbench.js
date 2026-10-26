@@ -485,6 +485,10 @@
         .then(function (s) { state = s; render(); });
     };
     row.appendChild(rot);
+    var rnd = el('button', 'btn' + (state.rotate.random ? ' on' : ''), state.rotate.random ? '● 随机顺序' : '○ 顺序轮换');
+    rnd.title = '随机=每次从池里抽一张(排除当前);顺序=按列表依次';
+    rnd.onclick = function () { api('/api/rotate', { enabled: state.rotate.enabled, intervalMin: state.rotate.intervalMin, playlist: state.rotate.playlist, random: !state.rotate.random }).then(function (s) { state = s; render(); }); };
+    row.appendChild(rnd);
     var sel = document.createElement('select');
     [15, 30, 60, 120].forEach(function (m) {
       var o = document.createElement('option');

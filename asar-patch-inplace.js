@@ -108,6 +108,18 @@ if (needBackup) {
   console.log('原生 index.html 已备份: ' + genFile + ' (' + pristineBuf.length + ' 字节)');
 }
 
+// ── 全量 asar 备份(每个 asar 身份一份):槽位级备份救不了"写入中途崩溃/被截断"
+// 造成的整个 asar 损坏 —— 那种情况下唯一自救就是整文件还原。341MB 只拷一次。
+const fullBak = path.join(BACKUP_DIR, 'app.asar.full.' + asarSize + '.bak');
+if (!fs.existsSync(fullBak)) {
+  try {
+    console.log('全量 asar 备份(每个身份只做一次)…');
+    fs.copyFileSync(ASAR, fullBak + '.tmp');
+    fs.renameSync(fullBak + '.tmp', fullBak);   // 原子落位:中断不会留下半个备份
+    console.log('全量备份完成: ' + fullBak);
+  } catch (e) { console.log('全量备份失败(不阻塞补丁): ' + e.message); }
+}
+
 // 已是目标形态(async 脚本、无渲染阻塞 link)才允许早退;
 // defer 旧形态要继续走重补丁升级为 async(defer 会阻塞 DOMContentLoaded,
 // 服务器忙时拖住 ZCode 首屏 —— 正是「有时候打不开 ZCode」的注入侧成因)。
@@ -171,15 +183,18 @@ try {
   fs.closeSync(wfd);
 }
 
-// ── 读回校验 ──
+// ── 读回校验(强化):全槽位字节比对,而不只是"加载器存在"——
+// 写偏了/写短了/尾部截断都能立刻发现,损坏的 asar 绝不留到下一次启动。
 const vfd = fs.openSync(ASAR, 'r');
 const vbuf = Buffer.alloc(SIZE);
 fs.readSync(vfd, vbuf, 0, SIZE, OFF);
 fs.closeSync(vfd);
-// 校验只认「加载器存在」:tiny/min 档位故意不含 embed.css(样式由 bootstrap.js 注入)
 const readback = vbuf.toString('utf8');
-if (readback.indexOf('7396/') < 0 || readback.indexOf('bootstrap.js') < 0) {
-  console.error('READBACK MISMATCH! 读回内容里没有加载器,asar 可能被占用或写入被拒。');
+if (!vbuf.equals(out)) {
+  console.error('READBACK MISMATCH! 读回内容与写入字节不一致(asar 可能被并发修改),立即中止。');
+  if (readback.indexOf('7396/') < 0 || readback.indexOf('bootstrap.js') < 0) {
+    console.error('读回内容里连加载器都没有 —— 请用 ~/.we-wallpaper/asar-backup 还原后重试。');
+  }
   process.exit(1);
 }
 console.log('PATCHED IN PLACE: ' + body.length + '/' + SIZE + ' bytes used at offset ' + OFF + '(读回校验通过)');
