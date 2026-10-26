@@ -528,6 +528,34 @@ function faststartVariant(abs, id) {
   }
 }
 
+// ── 变体「就绪即用」路径:媒体请求零阻塞的关键 ──
+// 变体文件已存在 → 直接用;不存在 → 后台起生成(去重靠既有 Jobs 表),本次回原片。
+// 与 await 版相比:切换永不等待 ffmpeg(转码最长 10 分钟,等=「换不动壁纸」)。
+function faststartVariantReady(abs, id) {
+  try {
+    const st = fs.statSync(abs);
+    if (!/\.(mp4|m4v|mov)$/i.test(abs)) return null;
+    const key = abs + '|' + st.size + '|' + Math.floor(st.mtimeMs);
+    const out = path.join(mediaCacheDir('faststart'), safeId(id) + '-' + fp8(key) + '.mp4');
+    if (fs.existsSync(out) && fs.statSync(out).size > 1024) return out;
+    if (moovAtHead(abs)) return null;   // 本就 faststart,无需变体
+    faststartVariant(abs, id);          // 后台生成(带并发去重),本次用原片
+    return null;
+  } catch { return null; }
+}
+function videoVariantReady(src, id) {
+  try {
+    const cap = Number(state.videoFpsCap) || 0;
+    if (!cap || !detectFfprobe() || !/\.(mp4|m4v|mov)$/i.test(src)) return null;
+    const st = fs.statSync(src);
+    const key = src + '|' + st.size + '|' + Math.floor(st.mtimeMs) + '|' + cap;
+    const out = path.join(mediaCacheDir('transcode'), safeId(id) + '-' + cap + '-' + fp8(key) + '.mp4');
+    if (fs.existsSync(out) && fs.statSync(out).size > 1024) { transcodePin.set(key, out); return out; }
+    videoVariant(src, id);              // 后台生成(内部查 pin/jobs 去重),本次用 src
+    return null;
+  } catch { return null; }
+}
+
 // 启动预热(源自 dsh-wallpaper-engine 的 warmFaststartFavorites):轮换列表里的视频
 // 先做一遍 moov 前置(无损 -c copy),下次轮换到它们时元数据立即可得,切换不再
 // 等整个文件顺流读完。顺序=列表优先,串行执行不与播放抢磁盘,最多 12 张。
@@ -1607,11 +1635,11 @@ ${a.cursor ? '#root { cursor: ' + a.cursor + ' !important; }' : ''}
       let abs = fenced(w.dir, rel);
       if (!abs) { res.statusCode = 403; return res.end('forbidden-media'); }
       if (/\.(mp4|m4v|mov)$/i.test(abs)) {
-        // moov 在尾部的视频会迫使浏览器整读文件才拿到元数据(DSH 根因修复):
-        // 一次性无损重排(faststart),变体缓存后与文件大小解耦;失败回原片
-        const fsv = await faststartVariant(abs, id);          // ① moov 前置(无损)
-        const base2 = fsv || abs;
-        const tv = await videoVariant(base2, id);             // ② 帧率上限转码(对 faststart 变体亦可)
+        // 变体绝不阻塞响应:转码(fps 上限)最长 10 分钟,同步等待会让该视频的
+        // 媒体请求挂满全程 —— 播放层 20s 超时降级,用户看到的就是「换不动壁纸」。
+        // 策略:已有变体直接用;没有就立即回原片,转码/重排在后台生成,下次生效。
+        const fsv = faststartVariantReady(abs, id);
+        const tv = videoVariantReady(fsv || abs, id);
         if (tv) abs = tv; else if (fsv) abs = fsv;
       }
       return serveFile(abs, req, res, { cache: 'public, max-age=3600' });

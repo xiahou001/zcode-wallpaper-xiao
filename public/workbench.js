@@ -16,9 +16,13 @@
     try { if (window.parent && window.parent !== window) window.parent.postMessage('we-wp-appearance', '*'); } catch (e) {}
   }
   function api(path, body) {
-    return fetch(BASE + path, body !== undefined ? {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-    } : undefined).then(function (r) {
+    // 超时保护:挂起的 POST 会让按钮永久无响应(=「换不动」);10s 后中止并抛错
+    const ctrl = new AbortController();
+    const kill = setTimeout(function () { ctrl.abort(); }, 10000);
+    const p = fetch(BASE + path, body !== undefined ? {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: ctrl.signal,
+    } : { signal: ctrl.signal }).finally(function () { clearTimeout(kill); });
+    return p.then(function (r) {
       return r.json();
     }).then(function (data) {
       if (body !== undefined) notifyAppearance();   // 任何状态写入都让宿主立即刷新样式

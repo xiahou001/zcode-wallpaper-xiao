@@ -13,8 +13,14 @@
   // ── 热更新样式 ──────────────────────────────────────────────
   var styleEl = null;
   var lastCss = '';
+  // fetch 超时:挂起的请求会让 busy 锁永远不放,样式/版本热更新从此失灵
+  function fetchTO(path, ms) {
+    var ctrl = new AbortController();
+    var kill = setTimeout(function () { ctrl.abort(); }, ms || 5000);
+    return fetch(path, { cache: 'no-store', signal: ctrl.signal }).finally(function () { clearTimeout(kill); });
+  }
   function refreshCss() {
-    fetch(BASE + '/embed.css', { cache: 'no-store' })
+    fetchTO(BASE + '/embed.css')
       .then(function (r) { return r.text(); })
       .then(function (t) {
         if (t === lastCss) return;
@@ -40,7 +46,7 @@
     if (versionBusy || document.hidden) return;   // 窗口隐藏时跳过,省 CPU 与请求
     versionBusy = true;
     // /api/style-version(样式热更新);/api/version 是代码指纹,语义不同,勿混用
-    fetch(BASE + '/api/style-version', { cache: 'no-store' })
+    fetchTO(BASE + '/api/style-version')
       .then(function (r) { return r.json(); })
       .then(function (d) {
         var v = d && d.v;
@@ -80,7 +86,7 @@
   function checkServer() {
     // 探活用极轻的 style-version 探针(旧实现取整份 /api/state,纯浪费);
     // 4s 一次 × 多窗口,省下的带宽让首屏内容更快回来。
-    fetch(BASE + '/api/style-version?health=' + Date.now(), { cache: 'no-store', mode: 'cors' })
+    fetchTO(BASE + '/api/style-version?health=' + Date.now())
       .then(function (r) {
         if (!r.ok) throw new Error('server ' + r.status);
         return r.json();

@@ -30,9 +30,15 @@
   let sceneWatchdog = 0;
   let sceneReloadTries = {};
 
-  const api = (path, body) => fetch(path, body ? {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-  } : undefined).then((r) => r.json());
+    // 所有服务器请求带超时:一次挂起的 fetch 若无超时,pollBusy 会永远锁死,
+  // 之后所有切换/暂停全部失效 —— 正是「有时换不动壁纸」的根因。
+  const api = (path, body) => {
+    const ctrl = new AbortController();
+    const kill = setTimeout(() => ctrl.abort(), 8000);
+    return fetch(path, body ? {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: ctrl.signal,
+    } : { signal: ctrl.signal }).then((r) => r.json()).finally(() => clearTimeout(kill));
+  };
   const current = () => wallpapers.find((w) => w.id === state.currentId) || null;
   function notifyParentReady() {
     if (!EMBED || window.parent === window) return;
