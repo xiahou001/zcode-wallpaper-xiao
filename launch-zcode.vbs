@@ -1,7 +1,16 @@
-' Launch ZCode with the wallpaper server silently.
-Dim fso, shell, root, nodeExe, zcodeExe, command, req
+' ZCode launcher: starts the wallpaper server if needed, then opens ZCode.
+' ELECTRON_RUN_AS_NODE must be stripped before spawning ZCode.exe. When it is
+' inherited (e.g. from a DeepSeek Harness / node host session), ZCode.exe runs
+' as a bare node interpreter, rejects every Chromium switch with 'bad option'
+' and exits silently with code 0 or 9 -- the window never appears.
+Dim fso, shell, env, root, nodeExe, zcodeExe, command, req, i
 Set fso = CreateObject("Scripting.FileSystemObject")
 Set shell = CreateObject("WScript.Shell")
+Set env = shell.Environment("PROCESS")
+env.Remove "ELECTRON_RUN_AS_NODE"
+env.Remove "ELECTRON_NO_ATTACH_CONSOLE"
+env.Remove "NODE_OPTIONS"
+env.Remove "NODE_ENV"
 root = fso.GetParentFolderName(WScript.ScriptFullName)
 nodeExe = shell.ExpandEnvironmentStrings("%ProgramFiles%") & "\nodejs\node.exe"
 If Not fso.FileExists(nodeExe) Then nodeExe = "node"
@@ -30,7 +39,5 @@ If Not ServerReady() Then
   Next
 End If
 If fso.FileExists(zcodeExe) Then
-  ' --remote-debugging-port:壁纸注入的 CDP 轨道(只绑 127.0.0.1,零改安装文件);
-  ' 壁纸服务器检测到该端口即自动挂入壁纸层。不带此参数启动时回落 asar 补丁轨道。
   shell.Run Q(zcodeExe) & " --remote-debugging-port=9333", 1, False
 End If
