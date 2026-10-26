@@ -557,6 +557,30 @@
         box.appendChild(c);
       });
       content.appendChild(box);
+      // 已选顺序(轮换按此顺序执行;随机模式除外):↑↓ 调整,✕ 移除
+      if (editorIds && editorIds.length) {
+        content.appendChild(el('div', 'sec', '已选顺序(轮换按此顺序)'));
+        editorIds.forEach(function (id, i2) {
+          var w2 = wallpapers.find(function (x) { return x.id === id; });
+          var orow = el('div', 'row');
+          orow.appendChild(el('span', null, (i2 + 1) + '. ' + (w2 ? w2.title : id)));
+          var sp2 = el('span', null, ''); sp2.style.flex = '1';
+          orow.appendChild(sp2);
+          var up = el('button', 'btn', '↑');
+          up.disabled = i2 === 0;
+          up.onclick = function () { var t = editorIds[i2 - 1]; editorIds[i2 - 1] = editorIds[i2]; editorIds[i2] = t; render(); };
+          orow.appendChild(up);
+          var dn = el('button', 'btn', '↓');
+          dn.disabled = i2 === editorIds.length - 1;
+          dn.onclick = function () { var t = editorIds[i2 + 1]; editorIds[i2 + 1] = editorIds[i2]; editorIds[i2] = t; render(); };
+          orow.appendChild(dn);
+          var rm = el('button', 'btn danger', '✕');
+          rm.title = '从列表移除';
+          rm.onclick = function () { editorIds = editorIds.filter(function (x) { return x !== id; }); render(); };
+          orow.appendChild(rm);
+          content.appendChild(orow);
+        });
+      }
       var srow = el('div', 'row');
       var save = el('button', 'btn primary', '保存列表');
       save.onclick = function () {

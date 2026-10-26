@@ -141,6 +141,7 @@ function steamLibraries() {
 // 并按名取官方像素,场景渲染与官方引擎逐像素对齐;未配置则静默回落程序化复刻。
 // 素材属 WE 版权内容:只从用户本机路径**只读取用**,绝不复制入库(与上游合规口径一致)。
 let weAssetsProbe = { dir: null, at: 0 };
+let registrySteamLibs = null;   // 注册表 SteamPath 进程级只探一次(避免热路径 spawnSync)
 function detectWeAssetsDir() {
   if (Date.now() - weAssetsProbe.at < 60_000) return weAssetsProbe.dir;
   weAssetsProbe.at = Date.now();
@@ -148,6 +149,17 @@ function detectWeAssetsDir() {
   if (process.env.WE_WALLPAPER_ASSETS_DIR && process.env.WE_WALLPAPER_ASSETS_DIR.trim()) {
     cands.push(process.env.WE_WALLPAPER_ASSETS_DIR.trim());
   }
+  // 自定义 Steam 安装位置:注册表 HKCU\Software\Valve\Steam\SteamPath(一次性探测,
+  // 覆盖 libraryfolders.vdf 找不到的非默认安装)
+  if (registrySteamLibs === null) {
+    registrySteamLibs = [];
+    try {
+      const out = spawnSync('reg', ['query', 'HKCU\\Software\\Valve\\Steam', '/v', 'SteamPath'], { encoding: 'utf8', timeout: 4000 });
+      const m = /SteamPath\s+REG_SZ\s+(\S+)/.exec(out.stdout || '');
+      if (m) registrySteamLibs.push(m[1].replace(/\\\\/g, '/'));
+    } catch {}
+  }
+  for (const lib of registrySteamLibs) cands.push(lib + '/steamapps/common/wallpaper_engine/assets');
   for (const lib of steamLibraries()) cands.push(lib + '/steamapps/common/wallpaper_engine/assets');
   weAssetsProbe.dir = null;
   for (const c of cands) {
@@ -698,7 +710,12 @@ function scheduleRotation() {
   rotateTimer = setInterval(() => {
     const pl = state.playlists.find((p) => p.name === state.rotate.playlist);
     const hidden = state.contentFilter ? new Set(['r', 'mature']) : null;
-    const pool = inventory.filter((w) => w.playable && !(hidden && hidden.has((w.contentrating || '').toLowerCase())) && (pl ? pl.ids.includes(w.id) : true));
+    const ok = (w) => w && w.playable && !(hidden && hidden.has((w.contentrating || '').toLowerCase()));
+    // 有列表时按列表保存的顺序构建池(旧实现按扫描顺序,pl.ids 只当白名单 ——
+    // 用户在编辑器里排的顺序从未生效);随机模式会在池内再抽。
+    const pool = pl
+      ? [...new Set(pl.ids)].map((id) => inventory.find((w) => w.id === id)).filter(ok)
+      : inventory.filter(ok);
     if (pool.length < 1) return;
     if (state.rotate.random && pool.length > 1) {
       // 随机模式:排除当前张再抽(避免"随机到同一张"空转一轮)
@@ -1634,7 +1651,12 @@ ${a.cursor ? '#root { cursor: ' + a.cursor + ' !important; }' : ''}
 
 server.on('error', (e) => {
   console.error('[we-wallpaper] 服务器错误: ' + ((e && e.code) || e.message));
-  if (e && e.code === 'EADDRINUSE') console.error('[we-wallpaper] 端口被占用:已有实例在运行,本实例退出。');
+  if (e && e.code === 'EADDRINUSE') {
+    // 必须真的退出:旧实现只打日志,输掉端口竞争的实例永远挂着 ——
+    // 重启窗口期看门狗每 5s 拉一个,会积累出成群的僵尸 node 进程。
+    console.error('[we-wallpaper] 端口被占用:已有实例在运行,本实例退出。');
+    process.exit(0);
+  }
 });
 server.listen(PORT, '127.0.0.1', () => {
   const playable = inventory.filter((w) => w.playable).length;
