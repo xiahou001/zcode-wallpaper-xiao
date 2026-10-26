@@ -542,7 +542,7 @@
       }
     } catch (e) {}
   }
-  setInterval(sampleLuminance, 5000);
+  setInterval(function () { if (!document.hidden) sampleLuminance(); }, 5000);   // 隐藏时视频已暂停,抓帧无意义白耗 CPU
   // 预览图采样:切换瞬间即时给出正确亮度(实时帧采样随后精修)
   let lastPreviewId = null;
   function previewLuminance(w) {

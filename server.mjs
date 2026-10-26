@@ -104,7 +104,11 @@ const flushStateNow = () => {
   try {
     state = sanitizeState(state);
     fs.mkdirSync(APP_DIR, { recursive: true });
-    fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+    // 原子写:先写临时文件再改名 —— 直接写 state.json 的话,断电/崩溃瞬间
+    // 会留下截断的 JSON,重启后整套外观设置丢失(改名在同卷上是原子的)。
+    const tmp = STATE_FILE + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(state, null, 2));
+    fs.renameSync(tmp, STATE_FILE);
   } catch {}
 };
 const saveState = () => {
@@ -619,9 +623,10 @@ function videoVariant(abs, id) {
             fs.renameSync(tmp, out);
             diagRecord('transcode-ok', { id, encoder: encoders[k], fps: Math.round(fps), cap, bytes: fs.statSync(out).size });
             transcodePin.set(key, out);
+            transcodeJobs.delete(key);   // 完成即清:Jobs 表不随时间累积
             sweepMediaCache();   // 新增变体后回看预算
             resolve(out);
-          } catch (e2) { transcodePin.set(key, null); resolve(null); }
+          } catch (e2) { transcodePin.set(key, null); transcodeJobs.delete(key); resolve(null); }
         });
       };
       attempt(0);
@@ -642,7 +647,14 @@ function trackProgress(token) {                     // 上限保护,防长期运
 function diagRecord(kind, payload) {
   const entry = { t: Date.now(), kind: String(kind || 'unknown'), ...(payload || {}) }; diagEntries.push(entry);
   if (diagEntries.length > 200) diagEntries.shift();
-  try { fs.mkdirSync(APP_DIR, { recursive: true }); fs.appendFileSync(path.join(APP_DIR, 'diag.log'), JSON.stringify(entry) + '\n'); } catch {}
+  try {
+    fs.mkdirSync(APP_DIR, { recursive: true });
+    const logFile = path.join(APP_DIR, 'diag.log');
+    // 尺寸闸:长期运行防 diag.log 无限增长(每 60s 一条客户端诊断,周级可到几十 MB)。
+    // 超 2MB 截断保留尾部 200KB —— 诊断只需要最近的。
+    try { if (fs.statSync(logFile).size > 2 * 1024 * 1024) { const tail = fs.readFileSync(logFile).slice(-200 * 1024); fs.writeFileSync(logFile, tail); } } catch (e2) {}
+    fs.appendFileSync(logFile, JSON.stringify(entry) + '\n');
+  } catch {}
 }
 function sceneProgressSnapshot(token) { return sceneProgress.get(token) || { ok: false, token, served: 0, active: 0 }; }
 
