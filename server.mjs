@@ -238,7 +238,10 @@ function scanWallpapers() {
       }
       // sizeBytes 扫描时一次性取好:旧实现每次 /api/wallpapers 都对每张壁纸
       // statSync(播放器+工作台+面板合计每 5s 一轮 × 30+ 张),纯浪费。
-      const sizeBytes = (() => { try { return fileAbs ? fs.statSync(fileAbs).size : (mainAbs ? fs.statSync(mainAbs).size : 0); } catch { return 0; } })();
+      // ⚠ 必须在 mainAbs 定型之后按分支计算 —— 之前放在 scene 分支前,
+      // scene 壁纸撞 TDZ 被 catch 吃成 0,首帧看护的预算随之失去包大小缩放,
+      // 大包(170MB+)12 秒就被判失败跌进降级循环(「切换卡住」回归)。
+      let sizeBytes = 0;
       if (type === 'scene') {
         // 工坊条目常声明 scene.json 却只带打包的 scene.pkg(参考
         // dsh-wallpaper-engine 的 resolveSceneMainFileP):依次探测声明文件、
@@ -253,13 +256,18 @@ function scanWallpapers() {
             if (pkgs.length === 1) mainAbs = path.join(dir, pkgs[0]);
           } catch {}
         }
-        if (mainAbs) list.push({ id, title: proj.title || id, contentrating: rating, type: 'scene', dir, fileAbs: mainAbs, previewAbs, playable: true, sizeBytes });
-        else list.push({ id, title: proj.title || id, contentrating: rating, type, dir, fileAbs: null, previewAbs, playable: false, sizeBytes: 0 });
+        if (mainAbs) {
+          try { sizeBytes = fs.statSync(mainAbs).size; } catch (e3) { sizeBytes = 0; }
+          list.push({ id, title: proj.title || id, contentrating: rating, type: 'scene', dir, fileAbs: mainAbs, previewAbs, playable: true, sizeBytes });
+        } else list.push({ id, title: proj.title || id, contentrating: rating, type, dir, fileAbs: null, previewAbs, playable: false, sizeBytes: 0 });
       } else if (type === 'video' && fileOk) {
+        try { sizeBytes = fs.statSync(fileAbs).size; } catch (e3) { sizeBytes = 0; }
         list.push({ id, title: proj.title || id, contentrating: rating, type: 'video', dir, fileAbs, previewAbs, playable: true, sizeBytes });
       } else if (type === 'image' && fileOk) {
+        try { sizeBytes = fs.statSync(fileAbs).size; } catch (e3) { sizeBytes = 0; }
         list.push({ id, title: proj.title || id, contentrating: rating, type: 'image', dir, fileAbs, previewAbs: fileAbs, playable: true, sizeBytes });
       } else if (type === 'web' && fileOk) {
+        try { sizeBytes = fs.statSync(fileAbs).size; } catch (e3) { sizeBytes = 0; }
         list.push({ id, title: proj.title || id, contentrating: rating, type: 'web', dir, fileAbs, previewAbs, playable: true, sizeBytes });
       } else {
         list.push({ id, title: proj.title || id, contentrating: rating, type, dir, fileAbs: null, previewAbs, playable: false });
