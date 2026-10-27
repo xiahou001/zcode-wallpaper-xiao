@@ -1176,6 +1176,36 @@ const server = http.createServer(async (req, res) => {
       return serveFile(target, req, res, { cache: 'public, max-age=86400' });   // 本机只读素材,可长缓存
     }
 
+    // ---- 一键体检:服务器/注入/备份/缓存/磁盘/最近异常,工作台「体检」按钮的数据源 ----
+    if (p === '/api/doctor' && method === 'GET') {
+      const report = { t: Date.now() };
+      report.server = { ok: true, port: PORT, uptimeMin: Math.round(process.uptime() / 60), node: process.version };
+      report.inject = injectStatus();
+      report.zcodeRunning = zcodeRunning();
+      report.inventory = inventory.length;
+      report.luminance = luminance;
+      try {
+        const bakDir = path.join(APP_DIR, 'asar-backup');
+        const meta = JSON.parse(fs.readFileSync(path.join(bakDir, 'meta.json'), 'utf8'));
+        const full = path.join(bakDir, 'app.asar.full.' + meta.asarSize + '.bak');
+        report.backups = {
+          slot: fs.existsSync(path.join(bakDir, meta.backupFile)),
+          full: fs.existsSync(full),
+          fullMB: fs.existsSync(full) ? Math.round(fs.statSync(full).size / 1e6) : 0,
+          asarSize: meta.asarSize,
+        };
+      } catch (e) { report.backups = { error: String(e.message).slice(0, 80) }; }
+      let cacheBytes = 0;
+      for (const kind of ['faststart', 'transcode']) {
+        try { for (const f of fs.readdirSync(mediaCacheDir(kind))) { try { cacheBytes += fs.statSync(path.join(mediaCacheDir(kind), f)).size; } catch (e2) {} } } catch (e3) {}
+      }
+      report.cacheMB = Math.round(cacheBytes / 1e6);
+      try { const sfs = fs.statfsSync(APP_DIR); report.diskFreeGB = Math.round((sfs.bavail * sfs.bsize) / 1e9); } catch (e) { report.diskFreeGB = null; }
+      try { JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); report.stateOk = true; } catch (e) { report.stateOk = false; }
+      report.recentIssues = diagEntries.filter((e) => /error|fail|corrupt|rejection|exception|watchdog-|fence/i.test(String(e.kind))).slice(-6);
+      return sendJSON(res, 200, report);
+    }
+
     // ---- 开机自启 ZCode(可选,CDP 轨道的推荐启动方式)----
     // 只写/删一个标记文件,实际启动由 Startup 看门狗 VBS 在登录时执行:
     // 标记存在 → 服务器就绪后带 --remote-debugging-port=9333 启动 ZCode。
@@ -1714,6 +1744,8 @@ server.listen(PORT, '127.0.0.1', () => {
 scheduleRotation();
 startNowPlayingPoller();
 startPatchWatchdog();
+// 看门狗事件进诊断流:更新被检测/补丁打上/自愈发生,诊断日志里可回溯
+wpWatchdog.onEvent = (e) => diagRecord('watchdog-' + e.type, e);
 // CDP 注入轨道(零改文件):ZCode 经 launch-zcode.vbs 带 --remote-debugging-port=9333
 // 启动时,这里自动把 bootstrap 挂进聊天窗口。端口没人听时轮询空转,无副作用;
 // 与 asar 补丁轨道经 bootstrap 的幂等闸共存,先到先得。

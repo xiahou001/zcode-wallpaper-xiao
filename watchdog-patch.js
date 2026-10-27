@@ -26,6 +26,13 @@ let lastApply = 0;
 let applying = false;
 let fuseSkipLogged = false;
 let lastHealAt = 0;
+let lastAsarSize = 0;   // 更新检测:patchMissing 时发现 asar 大小变化 = ZCode 更新过
+
+// 事件上报:server.mjs 注入 onEvent 后,看门狗的关键动作进诊断流
+// (更新被检测/补丁打上/自愈发生/fuse 跳过),排障不再只能翻 stdout。
+function emit(type, data) {
+  try { if (module.exports.onEvent) module.exports.onEvent(Object.assign({ type, t: Date.now() }, data || {})); } catch (e) {}
+}
 
 function fuseIntegrityEnabled() {
   try {
@@ -109,6 +116,12 @@ function patchMissing() {
       return !fs.readFileSync(UNPACKED_INDEX, 'utf8').includes(MARK);
     } catch { return true; }
   }
+  // ZCode 更新检测:asar 大小与上次不同 = 更新器动过
+  try {
+    const sz = fs.statSync(ASAR).size;
+    if (lastAsarSize && sz !== lastAsarSize) emit('update-detected', { from: lastAsarSize, to: sz });
+    lastAsarSize = sz;
+  } catch (e) {}
   const r = readAsarSlot();
   if (r.corrupt) {
     // 头都读不出 = 损坏(或更新器正在写)。用文件稳定性区分:150ms 内 mtime 不变才算真损坏。
@@ -130,7 +143,7 @@ function runApply() {
   if (applying || Date.now() - lastApply < MIN_INTERVAL_MS) return;
   // fuse 感知:完整性校验开启后改 asar = 客户端拒绝启动,彻底不试(CDP 轨道接管)
   if (fuseIntegrityEnabled()) {
-    if (!fuseSkipLogged) { fuseSkipLogged = true; console.log('[watchdog] 检测到 asar 完整性校验已开启:不再尝试 asar 补丁,注入由 CDP 轨道承担'); }
+    if (!fuseSkipLogged) { fuseSkipLogged = true; console.log('[watchdog] 检测到 asar 完整性校验已开启:不再尝试 asar 补丁,注入由 CDP 轨道承担'); emit('fuse-skip'); }
     return;
   }
   applying = true;
@@ -142,6 +155,7 @@ function runApply() {
       console.log('[watchdog] ' + (err
         ? '打补丁失败: ' + String(stderr || err.message).trim()
         : '打补丁完成: ' + String(stdout).trim().replace(/\s+/g, ' | ')));
+      emit(err ? 'patch-failed' : 'patch-applied', { error: err ? String(stderr || err.message).slice(0, 160) : undefined });
     });
 }
 
@@ -150,4 +164,4 @@ timer.unref();
 // 启动时先查一轮
 setTimeout(() => { if (patchMissing()) runApply(); }, 15 * 1000).unref();
 console.log('[watchdog] 补丁看门狗已启动(每 60s 检查一次;含 asar 损坏自愈与 fuse 感知)');
-module.exports = { patchMissing, startPatchWatchdog: () => {} }; // 定时器随模块加载即启动
+module.exports = { patchMissing, onEvent: null, startPatchWatchdog: () => {} }; // 定时器随模块加载即启动

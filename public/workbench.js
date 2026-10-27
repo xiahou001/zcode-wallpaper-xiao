@@ -731,7 +731,28 @@
 
       content.appendChild(el('div', 'sec', '注入状态(双轨道)'));
       var injLine = el('div', 'muted', '正在读取注入轨道状态…');
+      injLine.style.whiteSpace = 'pre-line';
       content.appendChild(injLine);
+      var docRow = el('div', 'row');
+      var docB = el('button', 'btn', '⯮ 一键体检');
+      docB.title = '全面自检:服务器/注入/备份/缓存/磁盘/最近异常';
+      docB.onclick = function () {
+        docB.disabled = true; docB.textContent = '体检中…';
+        api('/api/doctor').then(function (r) {
+          var lines = [
+            '服务器: 运行 ' + r.server.uptimeMin + ' 分钟 · Node ' + r.server.node,
+            '注入: fuse' + (r.inject.fuseIntegrity === true ? '已开启(asar 轨道停用)' : r.inject.fuseIntegrity === false ? '未开启 ✓' : '?') + ' · asar补丁' + (r.inject.asarMarked ? '在位 ✓' : '丢失') + ' · CDP挂' + ((r.inject.cdp && r.inject.cdp.attached) || []).length + '窗',
+            '备份: 槽位' + (r.backups && r.backups.slot ? '✓' : '✗') + ' 全量' + (r.backups && r.backups.full ? '✓(' + r.backups.fullMB + 'MB)' : '✗'),
+            '缓存: ' + r.cacheMB + 'MB/6GB · 磁盘余 ' + (r.diskFreeGB != null ? r.diskFreeGB + 'GB' : '?') + ' · 壁纸 ' + r.inventory + ' 张',
+            '状态文件: ' + (r.stateOk ? '✓' : '✗ 损坏'),
+            '最近异常: ' + ((r.recentIssues && r.recentIssues.length) ? r.recentIssues.map(function (e) { return e.kind; }).join(', ') : '无 ✓'),
+          ];
+          injLine.textContent = lines.join('\n');
+        }).catch(function () { injLine.textContent = '体检失败:服务器不可达'; })
+          .then(function () { docB.disabled = false; docB.textContent = '⯮ 一键体检'; });
+      };
+      docRow.appendChild(docB);
+      content.appendChild(docRow);
       var injRow = el('div', 'row');
       var autoZ = el('button', 'btn', '…');
       autoZ.title = '开机登录时自动带 CDP 调试端口启动 ZCode(壁纸注入的零改文件轨道,应用更新免疫);不开启则只用 asar 补丁轨道';

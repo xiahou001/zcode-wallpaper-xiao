@@ -95,6 +95,7 @@
   }
 
   function mountScene(w) {
+    const mountAt = Date.now();   // 加载进度显示的起点(预算的 startAt 会被遮挡暂停重置)
     const iframe = document.createElement('iframe');
     iframe.allow = 'autoplay';
     iframe.setAttribute('allowtransparency', 'true');
@@ -124,9 +125,14 @@
     sceneWatchdog = setInterval(() => {
       if (layer !== iframe || mountedId !== w.id) { clearInterval(sceneWatchdog); return; }
       if (document.hidden) { startAt = Date.now(); return; }   // 遮挡暂停期间不计入预算
-      fetch('/api/scene-progress?token=' + encodeURIComponent(w.sceneBase || ''), { cache: 'no-store' })
+      api('/api/scene-progress?token=' + encodeURIComponent(w.sceneBase || ''))   // 带超时:挂起的探询不再拖住看护节拍
         .then(function (p) {
-          if (p && p.active > 0) { startAt = Date.now(); return; }   // 载荷仍在传输:顺延预算
+          if (p && p.active > 0) {
+            startAt = Date.now();
+            // 大包加载进度:标题显示已等待秒数 —— 用户看得出「在加载」而不是「卡死」
+            try { $('hud-title').textContent = w.title + '(加载中 ' + Math.round((Date.now() - mountAt) / 1000) + 's)'; } catch (e3) {}
+            return;
+          }
           if (p && p.served && Date.now() - startAt > budgetMs) { clearInterval(sceneWatchdog); wallpaperFailed(w, 'scene-no-frames'); }
         }).catch(function () {});
       try {
@@ -147,6 +153,7 @@
         if (win && win.__wp && frame && frame.running && frame.fps > 0) {
           clearInterval(sceneWatchdog);
           recoveryAttempts = 0;
+          try { $('hud-title').textContent = w.title; } catch (e5) {}   // 起播:去掉「加载中」后缀
           const cb = onLayerReady; onLayerReady = null;
           if (cb) cb();              // 首帧就绪:淡出旧壁纸,淡入场景
           pushSceneMedia();          // 就绪即推送 Now Playing(媒体响应型壁纸)
