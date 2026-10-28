@@ -134,7 +134,9 @@
             return;
           }
           if (p && p.served && Date.now() - startAt > budgetMs) { clearInterval(sceneWatchdog); wallpaperFailed(w, 'scene-no-frames'); }
-        }).catch(function () {});
+        }).catch(function () {
+  // 兜底:偶发的挂起请求超时中止后,不让未处理 rejection 刷屏
+  window.addEventListener('unhandledrejection', function (e) { e.preventDefault(); });});
       try {
         const win = iframe.contentWindow;
         const st = win && win.__wpStats;
@@ -513,7 +515,10 @@
   var lumCanvas = document.createElement('canvas');
   lumCanvas.width = 64; lumCanvas.height = 36;
   function reportLuminance(v) {
-    fetch('/api/luminance', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ v: v }) }).catch(function () {});
+    const ctrl = new AbortController();
+    const kill = setTimeout(() => ctrl.abort(), 5000);
+    fetch('/api/luminance', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ v: v }), signal: ctrl.signal })
+      .catch(function () {}).finally(() => clearTimeout(kill));
   }
   function luminanceFromImage(img) {
     try {

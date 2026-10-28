@@ -8,6 +8,7 @@
  *   3. DOM 诊断每 60s 上报(data-slot 普查 + 大面积表面),驱动行级玻璃精调。
  */
 (function () {
+  window.addEventListener('unhandledrejection', function (e) { e.preventDefault(); });
   var BASE = 'http://127.0.0.1:7396';
 
   // ── 热更新样式 ──────────────────────────────────────────────

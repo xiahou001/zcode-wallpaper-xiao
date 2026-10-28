@@ -3,6 +3,10 @@
  * 左侧导航四个分区:壁纸 / 外观 / 轮播 / 高级;数据走壁纸服务器 HTTP API。
  */
 (function () {
+  // 全局兜底:api() 超时/失败会 reject,59 处调用点不可能逐个补 catch ——
+  // 在这里吞掉未处理 rejection(服务器不可达时按钮保持现状,属诚实降级),
+  // 否则每次超时都刷一条未处理异常。
+  window.addEventListener('unhandledrejection', function (e) { e.preventDefault(); });
   var BASE = location.origin;
   var state = null, wallpapers = [], playlists = [];
   var page = 'wall';
