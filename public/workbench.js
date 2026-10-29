@@ -333,6 +333,19 @@
       content.appendChild(fRow);
       content.appendChild(el('div', 'muted', '对壁纸画面整体生效:场景壁纸走渲染引擎通道,视频/图片/web 走 CSS;聊天窗口内同样生效。'));
 
+      // ── 画面微调三旋钮(源自 dsh-wallpaper-engine background 三旋钮)──
+      content.appendChild(el('div', 'sec', '画面微调'));
+      slider(content, '画面亮度', state.appearance.bgBrightness != null ? state.appearance.bgBrightness : 100, 50, 150, function (v) { state.appearance.bgBrightness = v; api('/api/appearance', { bgBrightness: v }); });
+      slider(content, '画面对比', state.appearance.bgContrast != null ? state.appearance.bgContrast : 100, 50, 150, function (v) { state.appearance.bgContrast = v; api('/api/appearance', { bgContrast: v }); });
+      slider(content, '画面饱和', state.appearance.bgSaturate != null ? state.appearance.bgSaturate : 100, 0, 200, function (v) { state.appearance.bgSaturate = v; api('/api/appearance', { bgSaturate: v }); });
+      content.appendChild(el('div', 'muted', '与预设滤镜叠加生效(滤镜管风格,这里管程度);100% = 不动。改动即时热更新到聊天窗口。'));
+
+      // ── 壁纸透明度与暗化层(源自 dsh-wallpaper-engine wallpaperOpacity / scrim)──
+      content.appendChild(el('div', 'sec', '壁纸透明度与暗化'));
+      slider(content, '壁纸透明度', state.appearance.opacity != null ? state.appearance.opacity : 100, 10, 100, function (v) { state.appearance.opacity = v; api('/api/appearance', { opacity: v }); });
+      slider(content, '暗化层', state.appearance.scrim != null ? state.appearance.scrim : 0, 0, 80, function (v) { state.appearance.scrim = v; api('/api/appearance', { scrim: v }); });
+      content.appendChild(el('div', 'muted', '透明度调低让壁纸融向深色底(看得见但不喧宾夺主);暗化层在壁纸上加黑罩,亮壁纸+浅色字看不清时优先用它。'));
+
       content.appendChild(el('div', 'sec', '智能可读性(源自 dsh-wallpaper-engine 的主题跟随)'));
       var rr = el('div', 'row');
       var rbtn = el('button', 'btn' + (state.readability.auto ? ' on' : ''), state.readability.auto ? '● 已开启' : '○ 已关闭');
@@ -415,6 +428,22 @@
       cSel.onchange = function () { api('/api/appearance', { cursor: cSel.value }).then(function (s) { state = s; render(); }); };
       curRow.appendChild(cSel);
       content.appendChild(curRow);
+      // 输入光标颜色(源自 DSH caretColor):壁纸透过玻璃输入框直贴光标,光标色与壁纸相近会隐形
+      var caretRow = el('div', 'row');
+      caretRow.appendChild(el('label', null, '光标颜色'));
+      var caretManual = /^#[0-9a-f]{6}$/i.test(state.appearance.caretColor || '');
+      var caretIn = document.createElement('input');
+      caretIn.type = 'color';
+      caretIn.value = caretManual ? state.appearance.caretColor : '#ffffff';
+      caretIn.title = '聊天输入框的光标颜色;自动 = 跟随 ZCode 原生';
+      caretIn.style.cssText = 'width:34px;height:26px;padding:0;border:0;background:transparent;cursor:pointer;';
+      caretIn.oninput = function () { state.appearance.caretColor = caretIn.value; api('/api/appearance', { caretColor: caretIn.value }); };
+      caretIn.onchange = function () { api('/api/appearance', { caretColor: caretIn.value }).then(function (s) { state = s; render(); }); };
+      caretRow.appendChild(caretIn);
+      var caretAuto = el('button', 'btn' + (caretManual ? '' : ' on'), caretManual ? '手动' : '● 自动');
+      caretAuto.onclick = function () { api('/api/appearance', { caretColor: '' }).then(function (s) { state = s; render(); }); };
+      caretRow.appendChild(caretAuto);
+      content.appendChild(caretRow);
 
       content.appendChild(el('div', 'sec', '壁纸与界面'));
       slider(content, '壁纸亮度', state.appearance.brightness, 50, 160, function (v) { state.appearance.brightness = v; api('/api/appearance', { brightness: v }); });
@@ -688,6 +717,27 @@
       batRow.appendChild(bat);
       content.appendChild(batRow);
       content.appendChild(el('div', 'muted', '场景帧率改动在下次切换壁纸时生效;遮挡暂停对视频与场景壁纸同时生效。'));
+
+      // ── 场景失败记忆(源自 DSH sceneLiveFailures):坏场景直接走降级,重试入口在这 ──
+      var sfRow = el('div', 'row');
+      var sfNames = Object.keys(state.sceneFailures || []);
+      var sfBtn = el('button', 'btn' + (sfNames.length ? ' danger' : ''), sfNames.length
+        ? '⟲ 重试场景渲染(' + sfNames.length + ' 张失败记忆)'
+        : '○ 场景失败记忆:空');
+      sfBtn.title = '首帧超时的场景壁纸会被记住并直接走视频降级(不再每次白等整包下载);这里清空记忆重新尝试完整渲染';
+      sfBtn.disabled = !sfNames.length;
+      sfBtn.onclick = function () {
+        api('/api/scene-retry', {}).then(function (s) { state = s; render(); });
+      };
+      sfRow.appendChild(sfBtn);
+      if (sfNames.length) {
+        var sfTitles = sfNames.map(function (id) {
+          var w2 = wallpapers.find(function (x) { return x.id === id; });
+          return w2 ? w2.title : id;
+        }).join('、');
+        sfRow.appendChild(el('span', 'muted', sfTitles.slice(0, 80)));
+      }
+      content.appendChild(sfRow);
 
       content.appendChild(el('div', 'sec', '媒体集成(源自 dsh-wallpaper-engine)'));
       var lyrRow = el('div', 'row');

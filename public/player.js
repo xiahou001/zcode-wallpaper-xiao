@@ -79,14 +79,10 @@
     }
     // Scene 优先尝试从 scene.pkg 中抽出的内嵌 MP4，再降级到作者预览图。
     if (w.type === 'scene') {
-      unmount();
-      const v = document.createElement('video');
-      v.loop = true; v.muted = effectiveMuted(); v.autoplay = true; v.playsInline = true;
-      v.src = '/scene-video/' + encodeURIComponent(w.id); v.className = 'layer-enter';
-      v.addEventListener('loadeddata', () => { recoveryAttempts = 0; v.classList.add('layer-on'); const cb = onLayerReady; onLayerReady = null; if (cb) cb(); });
-      v.addEventListener('error', () => { unmount(); if (w.preview) { mountFallback(w); $('hud-title').textContent = w.title + '（预览图）'; } });
-      stage.appendChild(v); layer = v; mountedId = w.id; v.play().catch(() => {});
-      $('hud-title').textContent = w.title + '（视频降级）';
+      // 重试耗尽:把这张场景记进服务器失败记忆(源自 DSH sceneLiveFailures),
+      // 之后选择/轮换到它直接走降级,不再每次白等整包下载。
+      api('/api/scene-fail', { id: w.id, reason: 'retries-exhausted' }).catch(function () {});
+      mountSceneFallback(w);
     } else if (w.preview) {
       unmount();
       mountFallback(w);
@@ -94,7 +90,25 @@
     }
   }
 
+  // 场景降级链(DSH sceneVideo → 预览图):先试 pkg 内嵌视频,没有再退预览图。
+  function mountSceneFallback(w) {
+    unmount();
+    const v = document.createElement('video');
+    v.loop = true; v.muted = effectiveMuted(); v.autoplay = true; v.playsInline = true;
+    v.src = '/scene-video/' + encodeURIComponent(w.id); v.className = 'layer-enter';
+    v.addEventListener('loadeddata', () => { recoveryAttempts = 0; v.classList.add('layer-on'); const cb = onLayerReady; onLayerReady = null; if (cb) cb(); });
+    v.addEventListener('error', () => { unmount(); if (w.preview) { mountFallback(w); $('hud-title').textContent = w.title + '（预览图）'; } });
+    stage.appendChild(v); layer = v; mountedId = w.id; v.play().catch(() => {});
+    $('hud-title').textContent = w.title + '（视频降级）';
+  }
+
   function mountScene(w) {
+    // 失败记忆命中(源自 DSH sceneLiveFailures):这张场景此前首帧超时过,
+    // 直接走降级链,不再重复整包下载的等待 —— 轮换列表混进坏场景不再拖慢切换。
+    if (state.sceneFailures && state.sceneFailures[w.id]) {
+      mountSceneFallback(w);
+      return;
+    }
     const mountAt = Date.now();   // 加载进度显示的起点(预算的 startAt 会被遮挡暂停重置)
     const iframe = document.createElement('iframe');
     iframe.allow = 'autoplay';
@@ -362,6 +376,9 @@
       propsKey = "";
       applyProps();
     };
+    // 主题秒判三梯:① 作者 schemecolor(扫描时算好的 WCAG 亮度,零加载)→
+    // ② 预览图 → ③ 实测帧。上游 theme-follow 口径:作者配色最优先。
+    if (w.schemeLum != null) reportLuminance(Math.min(1, w.schemeLum * 1.4));   // 服务器翻转阈值 0.55 ↔ 上游 0.40 的等比映射
     previewLuminance(w);   // 切换瞬间:按预览图亮度立即翻转文字色(实测帧随后精修)
     $('hud-title').textContent = w.title;
     document.title = w.title + ' · 动态壁纸';
@@ -372,6 +389,7 @@
     else mountFallback(w);
     if (layer) layer.style.zIndex = '1';
     denseSampling();
+    applyStageFx();   // 亮度/微调/透明度/暗化随新状态生效
     applyPaused();
     applyRate();
     applyFlip();
@@ -510,6 +528,30 @@
     $('btn-rotate').classList.toggle('hbtn--active', !!state.rotate.enabled);
   }
 
+  // ── 画面微调三旋钮 + 亮度 + 壁纸透明度 + 暗化层(源自 dsh-wallpaper-engine
+  //    background 三旋钮 / wallpaperOpacity / scrim)────────────────────────────
+  // 全部作用在 #stage(壁纸层容器)上:与层内过渡(opacity 动画)相乘不打架,
+  // 播放页与嵌入页都走 player.js,不会出现 embed.css 双重叠加。
+  // scrim 是壁纸上方的黑色罩(层级 5:盖住壁纸 1-2,让位 HUD 10 / 面板 20)。
+  let scrimEl = document.getElementById('we-scrim');
+  if (!scrimEl) {
+    scrimEl = document.createElement('div');
+    scrimEl.id = 'we-scrim';
+    scrimEl.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:5;background:transparent;';
+    document.body.appendChild(scrimEl);
+  }
+  function applyStageFx() {
+    const a = state.appearance || {};
+    const f = [];
+    if (Number(a.brightness) !== 100 && Number.isFinite(Number(a.brightness))) f.push('brightness(' + a.brightness + '%)');
+    if (Number(a.bgBrightness) !== 100 && Number.isFinite(Number(a.bgBrightness))) f.push('brightness(' + a.bgBrightness + '%)');
+    if (Number(a.bgContrast) !== 100 && Number.isFinite(Number(a.bgContrast))) f.push('contrast(' + a.bgContrast + '%)');
+    if (Number(a.bgSaturate) !== 100 && Number.isFinite(Number(a.bgSaturate))) f.push('saturate(' + a.bgSaturate + '%)');
+    if (stage) stage.style.filter = f.join(' ');
+    if (stage) stage.style.opacity = (Number(a.opacity) < 100 && Number.isFinite(Number(a.opacity))) ? String(Math.max(0.1, a.opacity / 100)) : '';
+    if (scrimEl) scrimEl.style.background = (Number(a.scrim) > 0 && Number.isFinite(Number(a.scrim))) ? 'rgba(0,0,0,' + (a.scrim / 100).toFixed(3) + ')' : 'transparent';
+  }
+
   // ── 亮度采样(智能可读性):视频帧/场景抓帧 → 平均亮度 → 上报服务器 ──
   var lumCanvas = document.createElement('canvas');
   lumCanvas.width = 64; lumCanvas.height = 36;
@@ -575,7 +617,7 @@
   let lyricsBox = null;
   if (EMBED) {
     lyricsBox = document.createElement('div');
-    lyricsBox.style.cssText = 'position:fixed;left:0;right:0;bottom:9vh;text-align:center;z-index:2;pointer-events:none;'
+    lyricsBox.style.cssText = 'position:fixed;left:0;right:0;bottom:9vh;text-align:center;z-index:6;pointer-events:none;'
       + 'font-size:20px;font-weight:600;letter-spacing:.5px;color:#fff;opacity:.88;'
       + 'text-shadow:0 2px 8px rgba(0,0,0,.85),0 0 24px rgba(0,0,0,.5);transition:opacity .6s ease;font-family:"Segoe UI",system-ui,sans-serif;';
     lyricsBox.textContent = '';
@@ -717,6 +759,7 @@
         applyRate();
         applyFlip();
         applyRotate();
+        applyStageFx();       // 外观(微调/透明度/暗化)变化即时生效
         applyLayerFilter();   // 外观(滤镜档)变化即时生效
       }
     } catch {} // 服务器暂离:保持当前画面

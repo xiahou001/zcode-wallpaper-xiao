@@ -231,6 +231,19 @@ function scanWallpapers() {
       const type = String(proj.type || '').toLowerCase();
       // 内容分级(WE 官方分级:Everyone / PG / PG13 / R 等),供工作台过滤
       const rating = String(proj.contentrating || '').toLowerCase();
+      // 作者声明配色(theme-follow 上游口径):project.json schemecolor "r g b" 浮点串 →
+      // WCAG 相对亮度,播放层切换瞬间即判深浅(不必等预览图/首帧)。
+      // ⚠ 恰好纯黑 = WE 新建工程默认值视作"没填"(上游实测 34% 是它,照用会把亮壁纸钉成深色)。
+      let schemeLum = null;
+      try {
+        const m = /^([\d.]+)\s+([\d.]+)\s+([\d.]+)$/.exec(String(proj.schemecolor || '').trim());
+        if (m) {
+          const [r, g, b] = [Number(m[1]), Number(m[2]), Number(m[3])];
+          const lin = (c) => { const v = Math.max(0, Math.min(1, c)); return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+          const L = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+          if (L > 0.001) schemeLum = Math.round(L * 10000) / 10000;
+        }
+      } catch {}
       let previewAbs = proj.preview ? path.join(dir, proj.preview) : null;
       if (!previewAbs || !fs.existsSync(previewAbs)) {
         previewAbs = ['preview.jpg', 'preview.gif', 'preview.png']
@@ -258,19 +271,19 @@ function scanWallpapers() {
         }
         if (mainAbs) {
           try { sizeBytes = fs.statSync(mainAbs).size; } catch (e3) { sizeBytes = 0; }
-          list.push({ id, title: proj.title || id, contentrating: rating, type: 'scene', dir, fileAbs: mainAbs, previewAbs, playable: true, sizeBytes });
-        } else list.push({ id, title: proj.title || id, contentrating: rating, type, dir, fileAbs: null, previewAbs, playable: false, sizeBytes: 0 });
+          list.push({ id, title: proj.title || id, contentrating: rating, schemeLum, type: 'scene', dir, fileAbs: mainAbs, previewAbs, playable: true, sizeBytes });
+        } else list.push({ id, title: proj.title || id, contentrating: rating, schemeLum, type, dir, fileAbs: null, previewAbs, playable: false, sizeBytes: 0 });
       } else if (type === 'video' && fileOk) {
         try { sizeBytes = fs.statSync(fileAbs).size; } catch (e3) { sizeBytes = 0; }
-        list.push({ id, title: proj.title || id, contentrating: rating, type: 'video', dir, fileAbs, previewAbs, playable: true, sizeBytes });
+        list.push({ id, title: proj.title || id, contentrating: rating, schemeLum, type: 'video', dir, fileAbs, previewAbs, playable: true, sizeBytes });
       } else if (type === 'image' && fileOk) {
         try { sizeBytes = fs.statSync(fileAbs).size; } catch (e3) { sizeBytes = 0; }
-        list.push({ id, title: proj.title || id, contentrating: rating, type: 'image', dir, fileAbs, previewAbs: fileAbs, playable: true, sizeBytes });
+        list.push({ id, title: proj.title || id, contentrating: rating, schemeLum, type: 'image', dir, fileAbs, previewAbs: fileAbs, playable: true, sizeBytes });
       } else if (type === 'web' && fileOk) {
         try { sizeBytes = fs.statSync(fileAbs).size; } catch (e3) { sizeBytes = 0; }
-        list.push({ id, title: proj.title || id, contentrating: rating, type: 'web', dir, fileAbs, previewAbs, playable: true, sizeBytes });
+        list.push({ id, title: proj.title || id, contentrating: rating, schemeLum, type: 'web', dir, fileAbs, previewAbs, playable: true, sizeBytes });
       } else {
-        list.push({ id, title: proj.title || id, contentrating: rating, type, dir, fileAbs: null, previewAbs, playable: false });
+        list.push({ id, title: proj.title || id, contentrating: rating, schemeLum, type, dir, fileAbs: null, previewAbs, playable: false });
       }
     }
   }
@@ -738,14 +751,33 @@ function readBody(req) {
     const chunks = [];
     let total = 0;
     let overflow = false;
+    let settled = false;
+    // 请求体空闲超时(源自 dsh-wallpaper-engine http-lifecycle 的 armBodyIdleTimeout):
+    // 客户端连上后不发数据(或中途停发)会让连接永久挂起,占着 socket 与异步处理链。
+    // 每收到数据重置计时,60s 无数据即销毁连接。
+    let idle = null;
+    const armIdle = () => {
+      clearTimeout(idle);
+      idle = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        try { req.destroy(); } catch {}
+        reject(new Error('body idle timeout'));
+      }, 60_000);
+      if (idle.unref) idle.unref();
+    };
+    const disarmIdle = () => clearTimeout(idle);
+    armIdle();
     req.on('data', (c) => {
-      if (overflow) return;
+      if (settled || overflow) return;
+      armIdle();
       total += c.length;
       chunks.push(c);
-      if (total > BODY_MAX_BYTES) { overflow = true; chunks.length = 0; req.destroy(); reject(new Error('payload too large')); }
+      if (total > BODY_MAX_BYTES) { overflow = true; chunks.length = 0; settled = true; disarmIdle(); req.destroy(); reject(new Error('payload too large')); }
     });
-    req.on('end', () => { if (!overflow) resolve(Buffer.concat(chunks).toString('utf8')); });
-    req.on('error', reject);
+    req.on('end', () => { disarmIdle(); if (!overflow && !settled) { settled = true; resolve(Buffer.concat(chunks).toString('utf8')); } });
+    req.on('error', (e) => { disarmIdle(); if (!settled) { settled = true; reject(e); } });
+    req.on('close', disarmIdle);
   });
 }
 
@@ -950,6 +982,7 @@ const server = http.createServer(async (req, res) => {
           return {
             id: w.id, title: w.title, type: w.type, playable: w.playable,
             contentrating: w.contentrating || null,
+            schemeLum: w.schemeLum != null ? w.schemeLum : null,   // 作者配色 WCAG 亮度(主题秒判用)
             preview: w.previewAbs ? `/preview/${w.id}` : null,
             hasPkg: w.type === 'scene',
             sceneBase,                                   // scene:渲染页 src 段(其下拼 scene.pkg)
@@ -981,6 +1014,32 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/scene-progress') {
       const token = String(u.searchParams.get('token') || '');
       return sendJSON(res, 200, sceneProgressSnapshot(token));
+    }
+    // 场景失败记忆(源自 DSH sceneLiveFailures):播放层首帧超时后上报,状态里记住这张
+    // 场景壁纸渲染失败;之后选择/轮换到它直接走视频降级,不再每次白等整包下载。
+    if (p === '/api/scene-fail' && method === 'POST') {
+      const body = JSON.parse((await readBody(req)) || '{}');
+      const id = String(body.id || '').slice(0, 64);
+      if (id) {
+        state.sceneFailures = state.sceneFailures || {};
+        if (!state.sceneFailures[id]) {
+          state.sceneFailures[id] = true;
+          saveState();
+          diagRecord('scene-fallback-memo', { id, reason: String(body.reason || '').slice(0, 80) });
+        }
+      }
+      return sendJSON(res, 200, { ok: true });
+    }
+    // 清除失败记忆:id 缺省 = 全部清空(工作台「重试场景渲染」按钮)。
+    if (p === '/api/scene-retry' && method === 'POST') {
+      const body = JSON.parse((await readBody(req)) || '{}');
+      const id = String(body.id || '').slice(0, 64);
+      const before = Object.keys(state.sceneFailures || {}).length;
+      if (id) delete state.sceneFailures[id];
+      else state.sceneFailures = {};
+      saveState();
+      diagRecord('scene-fallback-retry', { id: id || '(all)', cleared: before - Object.keys(state.sceneFailures || {}).length });
+      return sendJSON(res, 200, state);
     }
     if (p === '/api/select' && method === 'POST') {
       const body = JSON.parse((await readBody(req)) || '{}');
@@ -1120,6 +1179,18 @@ const server = http.createServer(async (req, res) => {
           const fc = String(body[key]).trim();
           state.appearance[key] = /^#[0-9a-f]{6}$/i.test(fc) ? fc.toLowerCase() : '';
         }
+      }
+      // 画面微调三旋钮 + 壁纸透明度 + 暗化层(源自 DSH background 三旋钮 / wallpaperOpacity / scrim)
+      for (const [k, lo, hi] of [['bgBrightness', 50, 150], ['bgContrast', 50, 150], ['bgSaturate', 0, 200], ['opacity', 10, 100], ['scrim', 0, 80]]) {
+        if (body[k] != null) {
+          const n = Number(body[k]);
+          if (Number.isFinite(n)) state.appearance[k] = Math.max(lo, Math.min(hi, Math.round(n)));
+        }
+      }
+      // 输入光标颜色(源自 DSH caretColor):'' = 回原生
+      if (body.caretColor != null) {
+        const cc = String(body.caretColor).trim();
+        state.appearance.caretColor = /^#[0-9a-f]{6}$/i.test(cc) ? cc.toLowerCase() : '';
       }
       saveState();
       return sendJSON(res, 200, state);
@@ -1398,10 +1469,18 @@ const server = http.createServer(async (req, res) => {
       const id = 'custom-' + Date.now();
       const dir = path.join(APP_DIR, 'custom', id);
       fs.mkdirSync(dir, { recursive: true });
+      // 上传空闲超时:大视频上传中途停发的客户端不该永久占住连接(与 readBody 同口径,120s)
       await new Promise((resolve2, reject2) => {
         const ws = fs.createWriteStream(path.join(dir, filename));
+        let idle = setTimeout(() => { try { req.destroy(); } catch {} try { ws.destroy(); } catch {} reject2(new Error('upload idle timeout')); }, 120_000);
+        if (idle.unref) idle.unref();
+        const kick = () => { clearTimeout(idle); idle = setTimeout(() => { try { req.destroy(); } catch {} try { ws.destroy(); } catch {} reject2(new Error('upload idle timeout')); }, 120_000); if (idle.unref) idle.unref(); };
+        req.on('data', kick);
+        const done = (fn) => (v) => { clearTimeout(idle); fn(v); };
+        ws.on('finish', done(resolve2)(undefined));
+        ws.on('error', done(reject2));
+        req.on('error', done(reject2));
         req.pipe(ws);
-        ws.on('finish', resolve2); ws.on('error', reject2); req.on('error', reject2);
       });
       fs.writeFileSync(path.join(dir, 'project.json'), JSON.stringify({
         title: filename.replace(/\.[^.]+$/, ''), type, file: filename,
@@ -1454,12 +1533,16 @@ html, body { background: #101216 !important; }
 #root, #root button, #root .btn { font-family: ${a.fontFamily ? JSON.stringify(a.fontFamily) + ' !important' : 'inherit'}; }
 ${a.cursor ? '#root { cursor: ' + a.cursor + ' !important; }' : ''}
 #root { position: relative; z-index: 1; ${a.zoom === 100 ? '' : `zoom: ${a.zoom}%; `}text-shadow: 0 1px 2px rgba(0,0,0,${(shadow * 0.7).toFixed(2)}), 0 0 ${(Math.max(2, Math.round(a.stroke / 10)))}px rgba(0,0,0,${(shadow * 0.45).toFixed(2)}); }
-#we-wp-layer { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; z-index: 0; pointer-events: none; filter: brightness(${a.brightness}%) saturate(1.08);${a.flip ? ' transform: scaleX(-1) !important;' : ''} }
-/* 文字主题跟随壁纸亮度(智能可读性) */
+#we-wp-layer { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; z-index: 0; pointer-events: none;${a.flip ? ' transform: scaleX(-1) !important;' : ''} }
+/* 亮度/画面微调/透明度/暗化由播放层(player.js 的 applyStageFx)统一作用在
+   #stage 上 —— 这里不再叠加 filter,否则与播放层双重相乘。 */
+/* 文字主题跟随壁纸亮度(智能可读性)。层次保留(上游 color-roles 口径):
+   次要/弱化文字用 color-mix 向底色收,不再用同色降透明度 —— alpha 版在玻璃上
+   混进的是身后不可预测的壁纸像素,色相漂移;向已知底色混,层次清晰且对比可预期。 */
 :root:not(.dark), .dark {
   --color-foreground: ${fg} !important;
-  --color-foreground-subtle: ${fg}b8 !important;
-  --color-foreground-subtlest: ${fg}80 !important;
+  --color-foreground-subtle: color-mix(in srgb, ${fg} 72%, ${mainBase}) !important;
+  --color-foreground-subtlest: color-mix(in srgb, ${fg} 52%, ${mainBase}) !important;
   --color-background: ${glassDark(mainBase, a.main)} !important;
   --color-background-win-alt: ${glassDark(mainBase, a.main)} !important;
   --color-header: ${glassDark(mainBase, a.main)} !important;
@@ -1488,15 +1571,15 @@ ${a.cursor ? '#root { cursor: ' + a.cursor + ' !important; }' : ''}
    自定义属性随子树继承,改容器一处即全侧栏生效;不存在的 token 会被安全忽略。 */
 [data-slot^="sidebar"]:not([data-slot="sidebar-inset"]) {
   --color-foreground: ${fgSide} !important;
-  --color-foreground-subtle: ${fgSide}b8 !important;
-  --color-foreground-subtlest: ${fgSide}80 !important;
-  --color-muted-foreground: ${fgSide}99 !important;
+  --color-foreground-subtle: color-mix(in srgb, ${fgSide} 72%, ${sideBase}) !important;
+  --color-foreground-subtlest: color-mix(in srgb, ${fgSide} 52%, ${sideBase}) !important;
+  --color-muted-foreground: color-mix(in srgb, ${fgSide} 62%, ${sideBase}) !important;
   --color-accent-foreground: ${fgSide} !important;
 }
 [data-slot="sidebar-inset"] {
   --color-foreground: ${fg} !important;
-  --color-foreground-subtle: ${fg}b8 !important;
-  --color-foreground-subtlest: ${fg}80 !important;
+  --color-foreground-subtle: color-mix(in srgb, ${fg} 72%, ${mainBase}) !important;
+  --color-foreground-subtlest: color-mix(in srgb, ${fg} 52%, ${mainBase}) !important;
 }
 /* 聊天输入框:磨砂玻璃。
    DOM 实证(embed.js 的输入框抓取探针上报的真实元素链):
@@ -1538,11 +1621,14 @@ ${a.cursor ? '#root { cursor: ' + a.cursor + ' !important; }' : ''}
    只作用于输入框子树,不影响消息区(那里直接坐在壁纸上,仍按壁纸亮度决定)。 */
 .chat-composer-input-surface form {
   --color-foreground: ${glassFg} !important;
-  --color-foreground-subtle: ${glassFg}b8 !important;
-  --color-foreground-subtlest: ${glassFg}80 !important;
+  --color-foreground-subtle: color-mix(in srgb, ${glassFg} 72%, ${glassBase}) !important;
+  --color-foreground-subtlest: color-mix(in srgb, ${glassFg} 52%, ${glassBase}) !important;
   --color-input: ${glassDark(glassBase, Math.max(8, Math.min(96, Math.round(96 - 0.88 * a.glass))))} !important;
   --color-input-border: ${glassLight ? "rgba(0,0,0,.14)" : "rgba(255,255,255,.18)"} !important;
 }
+/* 输入光标颜色(源自 DSH caretColor):壁纸透过玻璃输入框直贴光标,光标色与
+   壁纸相近时会「隐形」;空 = 跟随原生(不写规则)。 */
+${a.caretColor ? '#root textarea, #root input, #root [contenteditable="true"] { caret-color: ' + a.caretColor + ' !important; }' : ''}
 
 /* 3) ZCode 给输入区外层套了 will-change:transform 的过渡层,它会建立 backdrop 采样根,
       导致 backdrop-filter 只能采到该层内部(空的)而看不到壁纸。
@@ -1723,6 +1809,8 @@ ${a.cursor ? '#root { cursor: ' + a.cursor + ' !important; }' : ''}
     res.statusCode = 404;
     res.end('not found');
   } catch (err) {
+    // 带未读请求体应答会发 RST(客户端看到 status=0):先排空再应答
+    try { if (!req.readableEnded && !req.complete) req.resume(); } catch {}
     try { sendJSON(res, 500, { error: String((err && err.message) || err) }); } catch {}
   }
 });

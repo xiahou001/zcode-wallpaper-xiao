@@ -4,7 +4,7 @@ export const DEFAULTS = {
   currentId: null, paused: false, volume: 1,
   rotate: { enabled: false, intervalMin: 30, playlist: null, random: false },
   transition: { kind: 'crossfade', ms: 1800 },
-  appearance: { main: 0, row: 52, sidebar: 55, brightness: 100, stroke: 35, zoom: 100, blur: 22, glass: 50, glassColor: '#14161c', fontFamily: '', cursor: '', filter: 'none', fontColor: '', fontColorSidebar: '', fontColorComposer: '', fit: 'cover', themeMode: 'auto', accentColor: '', flip: false },
+  appearance: { main: 0, row: 52, sidebar: 55, brightness: 100, stroke: 35, zoom: 100, blur: 22, glass: 50, glassColor: '#14161c', fontFamily: '', cursor: '', filter: 'none', fontColor: '', fontColorSidebar: '', fontColorComposer: '', fit: 'cover', themeMode: 'auto', accentColor: '', flip: false, bgBrightness: 100, bgContrast: 100, bgSaturate: 100, opacity: 100, scrim: 0, caretColor: '' },
   videoRate: 1,         // 视频壁纸播放倍速(0.5~2,源自 DSH playbackRate)
   readability: { auto: true }, occlusion: 'hidden', sceneFps: 30, videoFpsCap: 0, playlists: [], workshopDirs: [],
   lyrics: false,        // 在线歌词跑马灯(默认关闭,与 DSH 一致)
@@ -59,6 +59,18 @@ export function sanitizeState(input = {}) {
     ? String(s.appearance.accentColor).toLowerCase()
     : '';
   s.appearance.flip = Boolean(s.appearance.flip);   // 画面水平镜像(源自 DSH flip)
+  // 画面微调三旋钮(源自 DSH backgroundBrightness/Contrast/Saturate):100 = 不动
+  s.appearance.bgBrightness = num(s.appearance.bgBrightness, 50, 150, 100);
+  s.appearance.bgContrast = num(s.appearance.bgContrast, 50, 150, 100);
+  s.appearance.bgSaturate = num(s.appearance.bgSaturate, 0, 200, 100);
+  // 壁纸透明度(源自 DSH wallpaperOpacity):100 = 不动,调低让壁纸融向深色底
+  s.appearance.opacity = num(s.appearance.opacity, 10, 100, 100);
+  // 暗化层(源自 DSH scrim):壁纸上方的黑色罩,0 = 关
+  s.appearance.scrim = num(s.appearance.scrim, 0, 80, 0);
+  // 输入光标颜色(源自 DSH caretColor):'' = 跟随原生;光标色与壁纸相近时会隐形
+  s.appearance.caretColor = /^#[0-9a-f]{6}$/i.test(String(s.appearance.caretColor || ''))
+    ? String(s.appearance.caretColor).toLowerCase()
+    : '';
   s.videoRate = num(input.videoRate, 0.5, 2, 1);   // 视频倍速(0.5~2 连续值)
   // 自定义外观预设:只保留名字与外观快照,上限 12 个(防状态文件无限膨胀)
   s.appearancePresets = Array.isArray(input.appearancePresets)
@@ -83,5 +95,10 @@ export function sanitizeState(input = {}) {
   // WE 素材目录:只存路径字符串,可用性(含 materials/ 子目录)由服务器在用时探测;
   // 非法形态一律回落 null(= 自动探测),绝不因手工填错路径卡死状态保存。
   s.weAssetsDir = typeof input.weAssetsDir === 'string' && input.weAssetsDir.trim() ? String(input.weAssetsDir).trim() : null;
+  // 场景失败记忆(源自 DSH sceneLiveFailures):{ 壁纸id: true }。首帧超时的场景记进来,
+  // 之后选择/轮换到它直接走视频降级,不再每次白等整包下载;工作台「重试」清空。
+  s.sceneFailures = (input.sceneFailures && typeof input.sceneFailures === 'object' && !Array.isArray(input.sceneFailures))
+    ? Object.fromEntries(Object.entries(input.sceneFailures).slice(0, 200).map(([k]) => [String(k).slice(0, 64), true]))
+    : {};
   return s;
 }
