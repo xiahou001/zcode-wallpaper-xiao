@@ -34,7 +34,12 @@ function emit(type, data) {
   try { if (module.exports.onEvent) module.exports.onEvent(Object.assign({ type, t: Date.now() }, data || {})); } catch (e) {}
 }
 
+// fuse 状态进程级缓存:ZCode.exe 的 fuse 位在安装期固化,运行中不会变;
+// 旧实现每分钟同步顺序扫 200MB EXE,期间冻结壁纸服务器事件循环(所有
+// 轮询/心跳/媒体流卡顿)。缓存一次探测结果,进程重启才重扫。
+let fuseCache = null;
 function fuseIntegrityEnabled() {
+  if (fuseCache !== null) return fuseCache;
   try {
     const exe = path.join(ZCODE_DIR, 'ZCode.exe');
     const est = fs.statSync(exe);
@@ -50,13 +55,14 @@ function fuseIntegrityEnabled() {
       if (i >= 0) { found = pos + i; break; }
       pos += CH - SENT.length;
     }
-    if (found < 0) { fs.closeSync(efd); return false; }
+    if (found < 0) { fs.closeSync(efd); fuseCache = false; return false; }
     const tail = Buffer.alloc(48);
     fs.readSync(efd, tail, 0, 48, found + SENT.length);
     fs.closeSync(efd);
     const b = tail[2 + 4];   // fuse[4] = EnableEmbeddedAsarIntegrityValidation
-    return b === 1 || b === 0x31;
-  } catch { return false; }
+    fuseCache = (b === 1 || b === 0x31);
+    return fuseCache;
+  } catch { fuseCache = false; return false; }
 }
 
 // 读 asar 头并返回槽位信息;头解析失败/JSON 损坏 → { corrupt: true }

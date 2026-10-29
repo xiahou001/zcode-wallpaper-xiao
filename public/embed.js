@@ -71,6 +71,7 @@
   var healthTimer = 0;
   var retryTimer = 0;
   var reloadCount = 0;   // 连续握手失败重载计数(上限 3,防损坏壁纸的整包重下载黑洞)
+  var MAX_RELOAD = 3;    // 统一上限:握手过期与 error 重载共用
   function showFrame() {
     if (!frame) return;
     frame.style.display = 'block';
@@ -78,6 +79,8 @@
   }
   function reloadFrame() {
     if (!frame) return;
+    if (reloadCount >= MAX_RELOAD) return;   // 预算用尽:留旧帧,不再整包重下
+    reloadCount += 1;
     frameLoaded = false;
     frameReady = false;
     frameStartedAt = Date.now();
@@ -96,13 +99,12 @@
         var wasDown = serverWasDown;
         serverWasDown = false;
         showFrame();
-        // 握手过期重载带上限:损坏的壁纸连续重载 3 次后停手(每次重载都是整包
-        // 重下载,无限重载=带宽黑洞);服务器重启或窗口重新可见时清零重试。
+        // 重载只在「从未握手成功」或「握手后中途丢失」时发生,且全程共享同一
+        // 预算(reloadFrame 内有 MAX_RELOAD 闸)—— 损坏的壁纸连续重载 3 次后
+        // 停手(每次重载都是整包重下载,无限重载=带宽黑洞);服务器重启或窗口
+        // 重新可见时清零重试。
         var handshakeExpired = frameStartedAt && Date.now() - frameStartedAt > 8000;
-        if (wasDown || !frameLoaded || (handshakeExpired && !frameReady && reloadCount < 3)) {
-          reloadCount += 1;
-          reloadFrame();
-        }
+        if (wasDown || !frameLoaded || (handshakeExpired && !frameReady)) reloadFrame();
       })
       .catch(function () {
         serverWasDown = true;
@@ -124,7 +126,11 @@
       document.body.insertBefore(frame, document.body.firstChild);
     }
     frame.addEventListener('load', function () { frameLoaded = true; showFrame(); });
-    frame.addEventListener('error', function () { frameLoaded = false; frameReady = false; clearTimeout(retryTimer); retryTimer = setTimeout(checkServer, 2000); });
+    // error 只把握手状态打回未就绪,不直接标 frameLoaded=false 也不立即重试 ——
+    // 壁纸 iframe 内部的视频/场景错误会冒泡成 error,旧实现因此把整张壁纸拖进
+    // 「error → 立即 checkServer → 未加载 → 重载」的循环。交给 4s 心跳统一裁决:
+    // 真挂了(服务器不可达/握手过期)由 checkServer 按预算重载。
+    frame.addEventListener('error', function () { frameReady = false; });
     showFrame();
     frameStartedAt = Date.now();
     checkServer();

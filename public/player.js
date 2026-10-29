@@ -163,8 +163,7 @@
         }
         // 区分「还在下载」与「出不了帧」(DSH 同款):载荷在传输则顺延预算
         if (Date.now() - startAt > budgetMs) {
-          fetch('/api/scene-progress?token=' + encodeURIComponent(w.sceneBase || ''), { cache: 'no-store' })
-            .then((r) => r.json())
+          api('/api/scene-progress?token=' + encodeURIComponent(w.sceneBase || ''))   // 带超时:与第 128 行探询一致,服务器挂起不卡看护
             .then((p) => {
               if (p && p.active > 0) { startAt = Date.now() + 5000; return; }   // 仍在下载:续期
               clearInterval(sceneWatchdog);
