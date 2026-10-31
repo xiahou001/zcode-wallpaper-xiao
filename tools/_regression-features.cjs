@@ -48,6 +48,25 @@ const check = (name, ok, detail) => results.push([ok ? 'PASS' : 'FAIL', name, de
     check('glassColorDark 复位', (await j('/api/state')).appearance.glassColorDark === '', '');
   } catch (e) { check('玻璃双色', false, e.message); }
 
+  // 聊天框字体三件 + 正文字号缩放 + 渲染优化
+  try {
+    await j('/api/appearance', { fontFamilyComposer: '"KaiTi", serif', fontSizeComposer: 2, fontWeightComposer: 500, chatTextScale: 110, fontSmooth: true });
+    const st = await j('/api/state');
+    check('字体五件写入', st.appearance.fontFamilyComposer === '"KaiTi", serif' && st.appearance.fontSizeComposer === 2
+      && st.appearance.fontWeightComposer === 500 && st.appearance.chatTextScale === 110 && st.appearance.fontSmooth === true, '');
+    const css = await (await fetch(BASE + '/embed.css')).text();
+    check('字体规则进 CSS', css.includes('KaiTi') && css.includes('calc(1em + 2px)') && css.includes('font-weight: 500')
+      && css.includes('zoom: 1.10') && css.includes('antialiased'), '');
+    // 非法值钳制
+    await j('/api/appearance', { fontSizeComposer: 99, fontWeightComposer: 12345, chatTextScale: 999 });
+    const st2 = await j('/api/state');
+    check('非法值钳制', st2.appearance.fontSizeComposer === 8 && st2.appearance.fontWeightComposer === 0 && st2.appearance.chatTextScale === 140, '');
+    // 复位
+    await j('/api/appearance', { fontFamilyComposer: '', fontSizeComposer: 0, fontWeightComposer: 0, chatTextScale: 100, fontSmooth: false });
+    const st3 = await j('/api/state');
+    check('字体复位', st3.appearance.fontSizeComposer === 0 && st3.appearance.chatTextScale === 100 && !st3.appearance.fontSmooth, '');
+  } catch (e) { check('聊天框字体', false, e.message); }
+
   // custom-delete 防线 + 切换链路
   try {
     const r = await fetch(BASE + '/api/custom-delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: '../evil' }) });

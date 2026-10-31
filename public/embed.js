@@ -181,8 +181,10 @@
   }
 
   // ── 诊断上报 ───────────────────────────────────────────────
+  var diagCount = 0;
   function diag() {
     if (document.hidden) return;   // 隐藏时做全页 querySelectorAll+getComputedStyle 是纯浪费(强制布局)
+    diagCount += 1;
     try {
       var f = document.getElementById('we-wp-layer');
       var info = {
@@ -192,6 +194,33 @@
         iframeDisplay: f ? getComputedStyle(f).display : null,
         iframeRect: f ? (function (r) { return Math.round(r.width) + 'x' + Math.round(r.height); })(f.getBoundingClientRect()) : null,
         bigSurfaces: [],
+        // 主区文字普查(每 10 次 diag 跑一次 ≈ 10 分钟):主区里"自带较长直接文本"的
+        // 元素的 tag/类名/字号/行高 —— 消息区不用 data-slot,真实锚点只能实证采集;
+        // 为字体精调(正文字号/行高/角色分层)提供 ZCode 更新后仍可靠的证据。
+        chatFonts: (diagCount % 10 === 1) ? (function () {
+          try {
+            var region = document.querySelector('[data-slot="sidebar-inset"]') || document.body;
+            var els2 = region.querySelectorAll('*');
+            var out2 = [], seenCls = {};
+            for (var i2 = 0; i2 < els2.length && out2.length < 14; i2++) {
+              var e2 = els2[i2];
+              if (e2.children.length > 6) continue;
+              var hasText = false;
+              for (var n2 = e2.firstChild; n2; n2 = n2.nextSibling) {
+                if (n2.nodeType === 3 && n2.nodeValue.trim().length > 20) { hasText = true; break; }
+              }
+              if (!hasText) continue;
+              var cs2 = getComputedStyle(e2);
+              if (cs2.display === 'none' || cs2.visibility === 'hidden') continue;
+              var key = String(e2.className || e2.tagName).slice(0, 90);
+              if (seenCls[key]) continue;
+              seenCls[key] = 1;
+              out2.push({ tag: e2.tagName.toLowerCase(), cls: key.slice(0, 90), fs: cs2.fontSize, lh: cs2.lineHeight, fw: cs2.fontWeight });
+            }
+            out2.pliZoomProbe = (document.querySelectorAll('[data-slot="sidebar-inset"] p').length) + 'p/' + (document.querySelectorAll('[data-slot="sidebar-inset"] li').length) + 'li';
+            return out2;
+          } catch (e3) { return { err: String(e3).slice(0, 60) }; }
+        })() : undefined,
         // 壁纸层实况:聊天窗口里挂载的壁纸(类型/透明度/播放进度)
         wallpaper: (function () {
           try {

@@ -499,6 +499,58 @@
       content.appendChild(ffRow);
       content.appendChild(fdl);
       content.appendChild(el('div', 'muted', '支持任意字体族写法(如 "Microsoft YaHei", sans-serif);下拉列出本机全部已装字体,取不到清单时仍可手输。'));
+      // ── 聊天框字体三件(上游 fontCustom/typography 思路):族/字号/字重 ──
+      var cffRow = el('div', 'row');
+      cffRow.appendChild(el('label', null, '聊天框字体'));
+      var cffIn = document.createElement('input');
+      cffIn.type = 'text';
+      cffIn.placeholder = '空 = 跟随界面字体…';
+      cffIn.style.flex = '1';
+      cffIn.value = state.appearance.fontFamilyComposer || '';
+      cffIn.setAttribute('list', 'we-fonts');
+      cffIn.onchange = function () { api('/api/appearance', { fontFamilyComposer: cffIn.value.trim() }).then(function (s) { state = s; render(); }); };
+      cffRow.appendChild(cffIn);
+      var cffDef = el('button', 'btn', '默认');
+      cffDef.title = '清空,回到跟随界面字体';
+      cffDef.onclick = function () { api('/api/appearance', { fontFamilyComposer: '' }).then(function (s) { state = s; render(); }); };
+      cffRow.appendChild(cffDef);
+      content.appendChild(cffRow);
+      // 聊天框字号(px 偏移)+ 字重
+      var cfsRow = el('div', 'row');
+      cfsRow.appendChild(el('label', null, '聊天框字号'));
+      var cfsIn = document.createElement('input');
+      cfsIn.type = 'range'; cfsIn.min = -2; cfsIn.max = 8; cfsIn.step = 1;
+      cfsIn.value = Number(state.appearance.fontSizeComposer || 0);
+      var cfsVal = el('span', 'val', (Number(state.appearance.fontSizeComposer || 0) > 0 ? '+' : '') + (state.appearance.fontSizeComposer || 0) + 'px');
+      cfsIn.oninput = function () {
+        var v = Number(cfsIn.value);
+        cfsVal.textContent = (v > 0 ? '+' : '') + v + 'px';
+        state.appearance.fontSizeComposer = v;
+        api('/api/appearance', { fontSizeComposer: v });
+      };
+      cfsRow.appendChild(cfsIn); cfsRow.appendChild(cfsVal);
+      content.appendChild(cfsRow);
+      var cfwRow = el('div', 'row');
+      cfwRow.appendChild(el('label', null, '聊天框字重'));
+      var cfwSel = document.createElement('select');
+      [[0, '自动'], [300, '细 300'], [400, '常规 400'], [500, '中等 500'], [600, '半粗 600'], [700, '粗 700']].forEach(function (p) {
+        var o = document.createElement('option'); o.value = p[0]; o.textContent = p[1];
+        if (Number(state.appearance.fontWeightComposer || 0) === p[0]) o.selected = true;
+        cfwSel.appendChild(o);
+      });
+      cfwSel.onchange = function () { api('/api/appearance', { fontWeightComposer: Number(cfwSel.value) }).then(function (s) { state = s; render(); }); };
+      cfwRow.appendChild(cfwSel);
+      content.appendChild(cfwRow);
+      content.appendChild(el('div', 'muted', '聊天框=底部输入框;字号相对原生偏移,字重改变笔画粗细。约 5 秒内热更新到聊天窗口。'));
+      // 正文字号缩放(消息区 p/li zoom)+ 文字渲染优化
+      slider(content, '正文字号', state.appearance.chatTextScale != null ? state.appearance.chatTextScale : 100, 85, 140, function (v) { state.appearance.chatTextScale = v; api('/api/appearance', { chatTextScale: v }); });
+      content.appendChild(el('div', 'muted', '消息区段落/列表的字号缩放,保留标题/小字相对层次;100 = 原生。'));
+      var fsRow = el('div', 'row');
+      var fsB = el('button', 'btn' + (state.appearance.fontSmooth ? ' on' : ''), state.appearance.fontSmooth ? '● 文字渲染优化已开启' : '○ 文字渲染优化已关闭');
+      fsB.title = '细体抗锯齿(antialiased)+ 合字与字距微调;玻璃上的小字更干净,整体笔画略细';
+      fsB.onclick = function () { api('/api/appearance', { fontSmooth: !state.appearance.fontSmooth }).then(function (s) { state = s; render(); }); };
+      fsRow.appendChild(fsB);
+      content.appendChild(fsRow);
       var curRow = el('div', 'row');
       curRow.appendChild(el('label', null, '光标样式'));
       var cSel = document.createElement('select');

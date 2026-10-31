@@ -1360,6 +1360,12 @@ const server = http.createServer(async (req, res) => {
         const gd = String(body.glassColorDark).trim();
         state.appearance.glassColorDark = /^#[0-9a-f]{6}$/i.test(gd) ? gd.toLowerCase() : '';
       }
+      // 聊天框字体三件 + 正文字号缩放 + 渲染优化(schema 侧统一钳制,这里只透传)
+      if (body.fontFamilyComposer != null) state.appearance.fontFamilyComposer = String(body.fontFamilyComposer).trim();
+      if (body.fontSizeComposer != null) state.appearance.fontSizeComposer = Number(body.fontSizeComposer);
+      if (body.fontWeightComposer != null) state.appearance.fontWeightComposer = Number(body.fontWeightComposer);
+      if (body.chatTextScale != null) state.appearance.chatTextScale = Number(body.chatTextScale);
+      if (body.fontSmooth != null) state.appearance.fontSmooth = !!body.fontSmooth;
       saveState();
       return sendJSON(res, 200, state);
     }
@@ -1735,6 +1741,11 @@ html, body { background: #101216 !important; }
 #root, #root button, #root .btn { font-family: ${a.fontFamily ? JSON.stringify(a.fontFamily) + ' !important' : 'inherit'}; }
 ${a.cursor ? '#root { cursor: ' + a.cursor + ' !important; }' : ''}
 #root { position: relative; z-index: 1; ${a.zoom === 100 ? '' : `zoom: ${a.zoom}%; `}text-shadow: 0 1px 2px rgba(0,0,0,${(shadow * 0.7).toFixed(2)}), 0 0 ${(Math.max(2, Math.round(a.stroke / 10)))}px rgba(0,0,0,${(shadow * 0.45).toFixed(2)}); }
+/* 文字渲染优化(细体抗锯齿):玻璃上小字更干净;optimizeLegibility 启用合字与字距微调 */
+${a.fontSmooth ? '#root { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }' : ''}
+/* 消息正文字号缩放(上游 themeSize 的 Tailwind 适配):段落/列表走 zoom 缩放,
+   保留元素自身的相对层次(Tailwind 工具类的绝对字号无法用继承缩放);100 = 不动 */
+${a.chatTextScale && a.chatTextScale !== 100 ? `#root [data-slot="sidebar-inset"] p, #root [data-slot="sidebar-inset"] li { zoom: ${(a.chatTextScale / 100).toFixed(2)}; }` : ''}
 #we-wp-layer { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; z-index: 0; pointer-events: none;${a.flip ? ' transform: scaleX(-1) !important;' : ''} }
 /* 亮度/画面微调/透明度/暗化由播放层(player.js 的 applyStageFx)统一作用在
    #stage 上 —— 这里不再叠加 filter,否则与播放层双重相乘。 */
@@ -1831,6 +1842,16 @@ ${a.cursor ? '#root { cursor: ' + a.cursor + ' !important; }' : ''}
 /* 输入光标颜色(源自 DSH caretColor):壁纸透过玻璃输入框直贴光标,光标色与
    壁纸相近时会「隐形」;空 = 跟随原生(不写规则)。 */
 ${a.caretColor ? '#root textarea, #root input, #root [contenteditable="true"] { caret-color: ' + a.caretColor + ' !important; }' : ''}
+/* 聊天框字体三件(上游 fontCustom/typography 思路):族/字号/字重直接作用在真正的
+   输入元素上。族空 = 跟随全局 fontFamily,字号 0 = 原生,字重 0 = 自动。 */
+${(a.fontFamilyComposer || a.fontSizeComposer || a.fontWeightComposer) ? `
+.chat-composer-input-surface textarea,
+.chat-composer-input-surface [contenteditable="true"],
+.chat-composer-input-surface input {
+  ${a.fontFamilyComposer ? 'font-family: ' + JSON.stringify(a.fontFamilyComposer) + ' !important;' : ''}
+  ${a.fontSizeComposer ? 'font-size: calc(1em + ' + a.fontSizeComposer + 'px) !important;' : ''}
+  ${a.fontWeightComposer ? 'font-weight: ' + a.fontWeightComposer + ' !important;' : ''}
+}` : ''}
 
 /* 3) ZCode 给输入区外层套了 will-change:transform 的过渡层,它会建立 backdrop 采样根,
       导致 backdrop-filter 只能采到该层内部(空的)而看不到壁纸。

@@ -4,7 +4,7 @@ export const DEFAULTS = {
   currentId: null, paused: false, volume: 1,
   rotate: { enabled: false, intervalMin: 30, playlist: null, random: false },
   transition: { kind: 'crossfade', ms: 1800 },
-  appearance: { main: 0, row: 52, sidebar: 55, brightness: 100, stroke: 35, zoom: 100, blur: 22, glass: 50, glassColor: '#14161c', glassColorDark: '', fontFamily: '', cursor: '', filter: 'none', fontColor: '', fontColorSidebar: '', fontColorComposer: '', fit: 'cover', themeMode: 'auto', accentColor: '', flip: false, bgBrightness: 100, bgContrast: 100, bgSaturate: 100, opacity: 100, scrim: 0, caretColor: '' },
+  appearance: { main: 0, row: 52, sidebar: 55, brightness: 100, stroke: 35, zoom: 100, blur: 22, glass: 50, glassColor: '#14161c', glassColorDark: '', fontFamily: '', fontFamilyComposer: '', fontSizeComposer: 0, fontWeightComposer: 0, chatTextScale: 100, fontSmooth: false, cursor: '', filter: 'none', fontColor: '', fontColorSidebar: '', fontColorComposer: '', fit: 'cover', themeMode: 'auto', accentColor: '', flip: false, bgBrightness: 100, bgContrast: 100, bgSaturate: 100, opacity: 100, scrim: 0, caretColor: '' },
   videoRate: 1,         // 视频壁纸播放倍速(0.5~2,源自 DSH playbackRate)
   readability: { auto: true }, occlusion: 'hidden', sceneFps: 30, videoFpsCap: 0, playlists: [], workshopDirs: [],
   lyrics: false,        // 在线歌词跑马灯(默认关闭,与 DSH 一致)
@@ -40,6 +40,14 @@ export function sanitizeState(input = {}) {
   s.appearance.blur = num(s.appearance.blur, 0, 40, DEFAULTS.appearance.blur);   // 聊天框磨砂强度(px)
   s.appearance.glass = num(s.appearance.glass, 0, 100, DEFAULTS.appearance.glass);   // 聊天框玻璃透明度(0=实心 100=最透)
   s.appearance.fontFamily = /^[\w\u4e00-\u9fa5,\s'\"-]{0,120}$/.test(String(s.appearance.fontFamily || '')) ? String(s.appearance.fontFamily).trim() : '';
+  // 聊天框字体:族(空=跟随全局 fontFamily)/字号偏移(px,-2..+8,0=原生)/字重(0=自动,300..700)
+  s.appearance.fontFamilyComposer = /^[\w\u4e00-\u9fa5,\s'\"-]{0,120}$/.test(String(s.appearance.fontFamilyComposer || '')) ? String(s.appearance.fontFamilyComposer).trim() : '';
+  s.appearance.fontSizeComposer = num(s.appearance.fontSizeComposer, -2, 8, 0);
+  s.appearance.fontWeightComposer = [0, 300, 400, 500, 600, 700].includes(Number(s.appearance.fontWeightComposer)) ? Number(s.appearance.fontWeightComposer) : 0;
+  // 消息正文字号缩放(%,85..140,100=原生;作用在主区段落/列表的 zoom 上)
+  s.appearance.chatTextScale = num(s.appearance.chatTextScale, 85, 140, 100);
+  // 文字渲染优化(细体抗锯齿 + optimizeLegibility)
+  s.appearance.fontSmooth = Boolean(s.appearance.fontSmooth);
   s.appearance.cursor = ['', 'default', 'pointer', 'crosshair', 'text'].includes(String(s.appearance.cursor || '')) ? String(s.appearance.cursor || '') : '';
   // 壁纸滤镜(源自 dsh-wallpaper-engine 的效果白名单,场景/视频/图片层通用)
   s.appearance.filter = WALLPAPER_FILTERS.includes(s.appearance.filter) ? s.appearance.filter : 'none';
