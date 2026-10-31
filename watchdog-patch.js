@@ -27,6 +27,9 @@ let applying = false;
 let fuseSkipLogged = false;
 let lastHealAt = 0;
 let lastAsarSize = 0;   // 更新检测:patchMissing 时发现 asar 大小变化 = ZCode 更新过
+// stat 门控:asar 头部 JSON 可达数 MB,每分钟同步 JSON.parse 会冻结壁纸服务器事件循环。
+// 「在位 + 大小/mtime 未变」⇒ 直接回上一轮结论;文件被更新器动过必然改 stat,门控不漏检。
+let lastGoodSlot = { key: '', marked: false };
 
 // 事件上报:server.mjs 注入 onEvent 后,看门狗的关键动作进诊断流
 // (更新被检测/补丁打上/自愈发生/fuse 跳过),排障不再只能翻 stdout。
@@ -122,12 +125,15 @@ function patchMissing() {
       return !fs.readFileSync(UNPACKED_INDEX, 'utf8').includes(MARK);
     } catch { return true; }
   }
-  // ZCode 更新检测:asar 大小与上次不同 = 更新器动过
+  // ZCode 更新检测 + stat 门控:大小与上次不同 = 更新器动过
+  let st;
   try {
-    const sz = fs.statSync(ASAR).size;
-    if (lastAsarSize && sz !== lastAsarSize) emit('update-detected', { from: lastAsarSize, to: sz });
-    lastAsarSize = sz;
-  } catch (e) {}
+    st = fs.statSync(ASAR);
+    if (lastAsarSize && st.size !== lastAsarSize) emit('update-detected', { from: lastAsarSize, to: st.size });
+    lastAsarSize = st.size;
+  } catch (e) { return false; }
+  const szKey = st.size + '|' + Math.floor(st.mtimeMs);
+  if (lastGoodSlot.marked && lastGoodSlot.key === szKey) return false;   // 上一轮实锤在位且文件未动
   const r = readAsarSlot();
   if (r.corrupt) {
     // 头都读不出 = 损坏(或更新器正在写)。用文件稳定性区分:150ms 内 mtime 不变才算真损坏。
@@ -138,10 +144,12 @@ function patchMissing() {
       if (s1.size !== s2.size || s1.mtimeMs !== s2.mtimeMs) return false;   // 正在被写,不动
       if (Date.now() - lastHealAt < 10 * 60 * 1000) return false;           // 刚自愈过,别连环还原
       lastHealAt = Date.now();
+      lastGoodSlot = { key: '', marked: false };
       healCorruptAsar(s1.size);
       return false;   // 本轮结束,还原成功下轮重打补丁
     } catch { return false; }
   }
+  lastGoodSlot = r.marked ? { key: szKey, marked: true } : { key: '', marked: false };
   return !r.marked;
 }
 

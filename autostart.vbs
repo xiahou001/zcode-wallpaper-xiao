@@ -28,7 +28,13 @@ Function ServerReady()
   On Error Resume Next
   Dim req
   Set req = CreateObject("WinHttp.WinHttpRequest.5.1")
-  req.SetTimeouts 800, 800, 800, 800
+  ' 2000ms: 800ms was too tight - transient event-loop stalls (boot sweeps, GC,
+  ' antivirus scans) made healthy servers fail the probe, so EnsureServer spawned
+  ' a second instance that always lost the port race (leaking a poller each time).
+  req.SetTimeouts 2000, 2000, 2000, 2000
+  ' DIRECT (no proxy): a system VPN/proxy app can route 127.0.0.1 probes at the
+  ' proxy, failing against a healthy server (spawning a doomed second instance).
+  req.SetProxy 1
   req.Open "GET", "http://127.0.0.1:7396/api/state", False
   req.Send
   ServerReady = (Err.Number = 0 And req.Status = 200)

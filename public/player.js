@@ -730,7 +730,8 @@
       } catch {}
     }).catch(function () {});
   }
-  setInterval(applyProps, 8000);
+  // 隐藏时跳过:属性/清单轮询在窗口不可见时是纯浪费(状态轮询 poll 保留,那是控制生命线)
+  setInterval(function () { if (!document.hidden) applyProps(); }, 8000);
 
   // ── 滚轮转发(Web 壁纸;pointer-events:none 时作者脚本收不到,经 postMessage 还原)──
   window.addEventListener("wheel", function (e) {
@@ -789,7 +790,7 @@
     } catch {}
     inventoryBusy = false;
   }
-  setInterval(refreshInventory, 5000);
+  setInterval(function () { if (!document.hidden) refreshInventory(); }, 5000);
 
   // ── HUD 交互 ───────────────────────────────────────────────
   function pokeHud() {

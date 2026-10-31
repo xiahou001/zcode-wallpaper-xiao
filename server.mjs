@@ -72,11 +72,23 @@ const lyricsCache = new Map();
 
 // ── Now Playing 轮询(Windows SMTC via PowerShell WinRT,无原生依赖)──────────
 // 拉起常驻 PowerShell(tools/nowplaying.ps1),每 2s 输出一行 JSON;失败静默。
+// 进程治理(泄漏实证:每次服务器重启遗弃一个常驻 PowerShell,周级积累几十个):
+//   · 停机时显式 kill(否则 Windows 上子进程不随父进程退出,成为孤儿);
+//   · 崩溃自动重启,指数退避 2s→30s,连续 6 次退到 10 分钟(脚本缺失时不再空转打摆);
+//   · 存活超 60s 视为健康,失败计数清零。
+let nowPlayingProc = null;
+let npRestartTimer = 0;
+let npFailStreak = 0;
+let npStartedAt = 0;
+let shuttingDown = false;
+const NP_SCRIPT = path.join(__dirname, 'tools', 'nowplaying.ps1');
 function startNowPlayingPoller() {
-  if (process.platform !== 'win32') return;
+  if (process.platform !== 'win32' || nowPlayingProc) return;
   try {
-    const ps = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
-      path.join(__dirname, 'tools', 'nowplaying.ps1')], { stdio: ['ignore', 'pipe', 'ignore'] });
+    const ps = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', NP_SCRIPT],
+      { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
+    nowPlayingProc = ps;
+    npStartedAt = Date.now();
     let buf = '';
     ps.stdout.on('data', (c) => {
       buf += c.toString('utf8');
@@ -88,9 +100,20 @@ function startNowPlayingPoller() {
         try { nowPlaying = JSON.parse(line); } catch {}
       }
     });
-    ps.on('error', () => { nowPlaying = null; });
+    ps.on('error', () => { nowPlaying = null; });   // spawn 本身失败(ENOENT 等);exit 由下面接管
+    ps.on('exit', () => {
+      nowPlayingProc = null;
+      if (shuttingDown) return;
+      if (Date.now() - npStartedAt > 60_000) npFailStreak = 0;   // 上一次活得够久:重启计数清零
+      npFailStreak += 1;
+      const delay = npFailStreak >= 6 ? 10 * 60_000 : Math.min(30_000, 2000 * 2 ** (npFailStreak - 1));
+      clearTimeout(npRestartTimer);
+      npRestartTimer = setTimeout(() => { if (!shuttingDown) startNowPlayingPoller(); }, delay);
+      if (npRestartTimer.unref) npRestartTimer.unref();
+      diagRecord('nowplaying-restart', { streak: npFailStreak, delayMs: delay });
+    });
     ps.unref();
-  } catch {}
+  } catch { nowPlayingProc = null; }
 }
 // 状态写盘(带 300ms 尾随防抖):版本号即时推进(客户端热更新不受影响),
 // 但滑杆拖动一秒几十次 POST 时不再每次都同步写盘 —— 磁盘写风暴既伤盘也
@@ -581,10 +604,46 @@ function videoVariantReady(src, id) {
   } catch { return null; }
 }
 
+// ffmpeg 异步预探测:detectFfmpeg 内部是 execFileSync 同步探测(每候选最多 5s,
+// 杀软首次扫描 ffmpeg.exe 时能冻住事件循环数秒 → Startup 探活误判 → 拉起竞争败者)。
+// 预热开始前先用异步版本把缓存填上;之后所有同步调用(请求路径)只读缓存零阻塞。
+function ensureFfmpegAsync() {
+  if (ffmpegChecked) return Promise.resolve(ffmpegPath);
+  const cands = [];
+  if (process.env.FFMPEG_PATH) cands.push(process.env.FFMPEG_PATH);
+  try {
+    const wl = path.join(process.env.LOCALAPPDATA || '', 'Microsoft', 'WinGet', 'Packages');
+    for (const d of fs.readdirSync(wl) || []) {
+      if (!d.toLowerCase().startsWith('gyan.ffmpeg')) continue;
+      const base = path.join(wl, d);
+      for (const v of fs.readdirSync(base)) {
+        cands.push(path.join(base, v, 'bin', 'ffmpeg.exe'));
+        cands.push(path.join(base, v, 'ffmpeg.exe'));
+      }
+    }
+  } catch {}
+  cands.push(path.join(HOME, '.dsh-wallpaper-engine', 'ffmpeg', 'ffmpeg.exe'));
+  return cands.reduce((chain, c) => chain.then(() => {
+    if (ffmpegChecked) return null;
+    return new Promise((res) => {
+      try {
+        execFile(c, ['-version'], { timeout: 8000, stdio: 'ignore' }, (err) => {
+          if (!err) { ffmpegPath = c; ffmpegChecked = true; }
+          res(null);
+        });
+      } catch { res(null); }
+    });
+  }), Promise.resolve()).then(() => {
+    if (!ffmpegChecked) detectFfmpeg();   // 候选全失败:走一次同步全链(已错开启动窗口)得出与旧版一致的结论
+    return ffmpegPath;
+  });
+}
+
 // 启动预热(源自 dsh-wallpaper-engine 的 warmFaststartFavorites):轮换列表里的视频
 // 先做一遍 moov 前置(无损 -c copy),下次轮换到它们时元数据立即可得,切换不再
 // 等整个文件顺流读完。顺序=列表优先,串行执行不与播放抢磁盘,最多 12 张。
 async function warmFaststartOnBoot() {
+  await ensureFfmpegAsync();                                        // 先异步把 ffmpeg 探测完,预热内不再同步探测
   await new Promise((r) => setTimeout(r, 10000));   // 错开登录高峰:ZCode 启动那几秒别抢磁盘
   const orderedIds = [];
   const pl = state.playlists.find((x) => x.name === state.rotate.playlist);
@@ -816,11 +875,16 @@ const REQLOG = [];
 // ── 注入再同步(每小时):ZCode 更新替换 asar 后,自动恢复注入并清理过期影子目录 ──
 const ZCODE_DIR = process.env.ZCODE_DIR || path.join(process.env.LOCALAPPDATA || '', 'Programs', 'ZCode');
 const ZCODE_SHADOW = path.join(ZCODE_DIR, 'resources', 'app');
+// 60s 缓存:/api/doctor 在请求路径里同步 spawnSync tasklist(最坏 10s 超时会冻住
+// 事件循环);ZCode 起停是分钟级事件,缓存窗口内的一点点陈旧不影响任何判据。
+let zcodeRunCache = { at: 0, val: true };
 function zcodeRunning() {
+  if (Date.now() - zcodeRunCache.at < 60_000) return zcodeRunCache.val;
   try {
     const out = spawnSync('tasklist', ['/FI', 'IMAGENAME eq ZCode.exe'], { encoding: 'utf8', timeout: 10000 });
-    return /ZCode\.exe/i.test(out.stdout || '');
-  } catch { return true; }
+    zcodeRunCache = { at: Date.now(), val: /ZCode\.exe/i.test(out.stdout || '') };
+  } catch { /* 探测失败:沿用旧值(初始 true = 保守不碰 ZCode 文件) */ }
+  return zcodeRunCache.val;
 }
 function asarSlotPatched() {
   try {
@@ -916,9 +980,17 @@ async function readFuseIntegrity() {
     return null;
   }
 }
+// stat 门控:asar 头部 JSON 可达数 MB,同步 JSON.parse 会冻结事件循环上百 ms。
+// 大小+mtime 没变且上次已确认「在位」就直接回缓存 —— 注入标记只会被"更新器换文件"
+// 抹掉,而换文件必然改 stat,门控不漏检(读不到/未在位不缓存,下轮照常全查)。
+let asarMarkCache = { key: '', val: null };
 function asarMarked() {
   try {
     const asar = path.join(ZCODE_DIR, 'resources', 'app.asar');
+    let st;
+    try { st = fs.statSync(asar); } catch { return null; }
+    const key = st.size + '|' + Math.floor(st.mtimeMs);
+    if (asarMarkCache.key === key) return asarMarkCache.val;
     const fd = fs.openSync(asar, 'r');
     try {
       const probe = Buffer.alloc(64);
@@ -932,7 +1004,9 @@ function asarMarked() {
       const off = 8 + probe.readUInt32LE(4) + Number(node.offset);
       const buf = Buffer.alloc(Math.min(node.size, 8192));
       fs.readSync(fd, buf, 0, buf.length, off);
-      return buf.toString('utf8').includes('bootstrap.js');
+      const marked = buf.toString('utf8').includes('bootstrap.js');
+      if (marked) asarMarkCache = { key, val: true };   // 只缓存"在位":丢失态每轮全查,看门狗语义不变
+      return marked;
     } finally { fs.closeSync(fd); }
   } catch { return null; }   // 读不到(更新中/权限)→ 未知
 }
@@ -1464,24 +1538,50 @@ const server = http.createServer(async (req, res) => {
         req.resume();   // 消费掉请求体再应答,否则客户端可能收到连接重置而非 400
         res.statusCode = 400; return res.end('unsupported file type');
       }
+      // 上传大小上限 4GB:体量上限闸(慢速稳定上传没有空闲超时兜底,能写满整块磁盘)。
+      // 头部声明超限直接 413;流式计数兜底(声明不可信)。
+      const UPLOAD_MAX_BYTES = 4 * 1024 ** 3;
+      const clNum = Number(req.headers['content-length']);
+      if (Number.isFinite(clNum) && clNum > UPLOAD_MAX_BYTES) {
+        req.resume(); res.statusCode = 413; return res.end('upload too large');
+      }
       const type = ['.jpg', '.jpeg', '.png', '.webp', '.gif'].includes(ext) ? 'image'
         : ['.html', '.htm'].includes(ext) ? 'web' : 'video';
       const id = 'custom-' + Date.now();
       const dir = path.join(APP_DIR, 'custom', id);
       fs.mkdirSync(dir, { recursive: true });
       // 上传空闲超时:大视频上传中途停发的客户端不该永久占住连接(与 readBody 同口径,120s)
-      await new Promise((resolve2, reject2) => {
-        const ws = fs.createWriteStream(path.join(dir, filename));
-        let idle = setTimeout(() => { try { req.destroy(); } catch {} try { ws.destroy(); } catch {} reject2(new Error('upload idle timeout')); }, 120_000);
-        if (idle.unref) idle.unref();
-        const kick = () => { clearTimeout(idle); idle = setTimeout(() => { try { req.destroy(); } catch {} try { ws.destroy(); } catch {} reject2(new Error('upload idle timeout')); }, 120_000); if (idle.unref) idle.unref(); };
-        req.on('data', kick);
-        const done = (fn) => (v) => { clearTimeout(idle); fn(v); };
-        ws.on('finish', done(resolve2)(undefined));
-        ws.on('error', done(reject2));
-        req.on('error', done(reject2));
-        req.pipe(ws);
-      });
+      try {
+        await new Promise((resolve2, reject2) => {
+          const ws = fs.createWriteStream(path.join(dir, filename));
+          let idle = setTimeout(() => { try { req.destroy(); } catch {} try { ws.destroy(); } catch {} reject2(new Error('upload idle timeout')); }, 120_000);
+          if (idle.unref) idle.unref();
+          const kick = () => { clearTimeout(idle); idle = setTimeout(() => { try { req.destroy(); } catch {} try { ws.destroy(); } catch {} reject2(new Error('upload idle timeout')); }, 120_000); if (idle.unref) idle.unref(); };
+          let upBytes = 0;
+          req.on('data', (c) => {
+            if (upBytes === -1) return;
+            upBytes += c.length;
+            if (upBytes > UPLOAD_MAX_BYTES) {
+              upBytes = -1;
+              try { req.destroy(); } catch {}
+              try { ws.destroy(); } catch {}
+              reject2(new Error('upload too large'));
+              return;
+            }
+            kick();
+          });
+          const done = (fn) => () => { clearTimeout(idle); fn(); };
+          ws.on('finish', done(resolve2));
+          ws.on('error', done(reject2));
+          req.on('error', done(reject2));
+          req.pipe(ws);
+        });
+      } catch (e) {
+        // 失败即清理半成品目录(空闲超时/超限/写错误都不留垃圾)
+        try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+        if (String((e && e.message) || e).includes('too large')) { res.statusCode = 413; return res.end('upload too large'); }
+        throw e;
+      }
       fs.writeFileSync(path.join(dir, 'project.json'), JSON.stringify({
         title: filename.replace(/\.[^.]+$/, ''), type, file: filename,
       }));
@@ -1821,8 +1921,13 @@ server.on('error', (e) => {
     // 必须真的退出:旧实现只打日志,输掉端口竞争的实例永远挂着 ——
     // 重启窗口期看门狗每 5s 拉一个,会积累出成群的僵尸 node 进程。
     console.error('[we-wallpaper] 端口被占用:已有实例在运行,本实例退出。');
-    process.exit(0);
   }
+  // 其它 listen 失败(EACCES 等)同样退出:活着但不监听的实例是永不自愈的僵尸,
+  // Startup keepalive 循环(wscript 每 5s 探活)会在 ≤5s 内拉起干净实例。
+  // 走 shutdown 清理:listen 失败前 startNowPlayingPoller 已 spawn —— 实证它会成为
+  // 孤儿(端口竞争败者遗弃常驻 PowerShell)。EADDRINUSE 在 listen 回调异步触发,
+  // 而轮询 spawn 是同步代码,次序必然如此。
+  shutdown('listen-error');
 });
 server.listen(PORT, '127.0.0.1', () => {
   const playable = inventory.filter((w) => w.playable).length;
@@ -1841,15 +1946,24 @@ const cdpInjector = startCdpInjector({
   port: Number(process.env.WE_CDP_PORT || 9333),
   log: (m) => diagRecord(m),
 });
-sweepStaleCacheOnBoot();   // 指纹命名升级前留下的旧变体一次性回收
-sweepMediaCache();         // 启动先过一遍预算
-warmFaststartOnBoot();     // 轮换列表视频预热 moov 前置(后台串行,不阻塞服务)
+// 缓存清扫与预热延迟到 listen 之后 3s:启动期同步读盘(sweepStaleCacheOnBoot 全目录
+// stat + 首次 faststart 探测)会阻塞事件循环超过 Startup keepalive 探活的 800ms 超时,
+// 误判「服务器没起」拉起第二个实例 → 端口竞争 → 败者遗弃常驻 PowerShell(实证泄漏路径)。
+// 清扫晚 3 秒没有任何正确性影响,竞争窗口却从此消失。
+setTimeout(() => {
+  sweepStaleCacheOnBoot();   // 指纹命名升级前留下的旧变体一次性回收
+  sweepMediaCache();         // 启动先过一遍预算
+  warmFaststartOnBoot();     // 轮换列表视频预热 moov 前置(后台串行,不阻塞服务)
+}, 3000).unref();
 
 // ── 稳定性:优雅停机 + 异常兜底 ────────────────────────────────────────────
 // 退出前把防抖中的状态落盘(注销/关机时状态不丢),再关监听;
 // 未捕获异常:rejection 记日志继续跑(多数是瞬时网络);同步异常记日志后退出,
 // 让看门狗 5s 内拉起干净进程 —— 比带着坏状态硬撑更稳。
 function shutdown(signal) {
+  shuttingDown = true;
+  clearTimeout(npRestartTimer);
+  try { if (nowPlayingProc) nowPlayingProc.kill(); } catch (e) {}   // 常驻轮询不随父进程自动退出,必须显式杀
   try { flushStateNow(); } catch (e) {}
   try { cdpInjector.stop(); } catch (e) {}
   try { server.close(() => process.exit(0)); } catch (e) { process.exit(0); }
