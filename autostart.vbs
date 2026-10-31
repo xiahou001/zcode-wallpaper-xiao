@@ -43,6 +43,11 @@ Function ServerReady()
 End Function
 Sub EnsureServer()
   If ServerReady() Then Exit Sub
+  ' Double-check before spawning: transient VPN/Winsock blips fail a single probe
+  ' against a healthy server, and the doomed second instance always loses the
+  ' port race (leaking its poller). Re-probe once after 1.2s first.
+  WScript.Sleep 1200
+  If ServerReady() Then Exit Sub
   command = Q(nodeExe) & " " & Q(projectDir & "\server.mjs")
   shell.Run command, 0, False
   For i = 1 To 20
