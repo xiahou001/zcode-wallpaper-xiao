@@ -89,6 +89,7 @@ function startNowPlayingPoller() {
       { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
     nowPlayingProc = ps;
     npStartedAt = Date.now();
+    diagRecord('np-spawn', { pid: ps.pid, serverPid: process.pid });   // 轮询进程与服务器实例对账用(孤儿溯源)
     let buf = '';
     ps.stdout.on('data', (c) => {
       buf += c.toString('utf8');
@@ -103,6 +104,7 @@ function startNowPlayingPoller() {
     ps.on('error', () => { nowPlaying = null; });   // spawn 本身失败(ENOENT 等);exit 由下面接管
     ps.on('exit', () => {
       nowPlayingProc = null;
+      diagRecord('np-exit', { pid: ps.pid, livedMs: Date.now() - npStartedAt, shuttingDown });
       if (shuttingDown) return;
       if (Date.now() - npStartedAt > 60_000) npFailStreak = 0;   // 上一次活得够久:重启计数清零
       npFailStreak += 1;
@@ -115,6 +117,42 @@ function startNowPlayingPoller() {
     ps.unref();
   } catch { nowPlayingProc = null; }
 }
+
+// ── 孤儿轮询收割机 ──────────────────────────────────────────────────────────
+// 短命 server.mjs 实例(探活误判拉起的败者等)会遗弃常驻 nowplaying PowerShell,
+// 每只 ~50-100MB。无论 spawner 是谁:父进程已死、又不属于当前实例的轮询进程一律回收。
+// ⚠ 过滤器必须锚定 `-File ...nowplaying.ps1`:诊断查询的 -Command 串里也含这个
+//   文件名,曾把自家诊断进程当孤儿追了半天(2026-10-31 教训)。每 10 分钟一轮。
+async function reapOrphanPollers() {
+  if (process.platform !== 'win32') return;
+  try {
+    const out = await new Promise((resolve) => {
+      execFile('powershell.exe', ['-NoProfile', '-Command',
+        "Get-CimInstance Win32_Process -Filter \"Name='powershell.exe'\" | Where-Object { $_.CommandLine -match '-File .*nowplaying\\.ps1' } | Select-Object ProcessId,ParentProcessId | ConvertTo-Json -Compress"],
+        { timeout: 15000, windowsHide: true }, (err, stdout) => resolve(err ? null : stdout));
+    });
+    if (!out || !out.trim()) return;
+    let list = JSON.parse(out);
+    if (!Array.isArray(list)) list = [list];
+    const mine = nowPlayingProc ? nowPlayingProc.pid : -1;
+    for (const p of list) {
+      if (!p || p.ProcessId === mine) continue;
+      // 父进程还活着的一律不碰(那是某个活实例的合法轮询)
+      const parentAlive = await new Promise((resolve) => {
+        execFile('tasklist', ['/FI', 'PID eq ' + p.ParentProcessId, '/NH'], { timeout: 10000, windowsHide: true }, (err, so) => {
+          resolve(!err && /node|wscript|cscript/i.test(String(so || '')));
+        });
+      });
+      if (parentAlive) continue;
+      try {
+        execFile('taskkill', ['/PID', String(p.ProcessId), '/F'], { timeout: 10000, windowsHide: true }, () => {});
+        diagRecord('np-reap', { pid: p.ProcessId, parent: p.ParentProcessId });
+      } catch {}
+    }
+  } catch {}
+}
+setInterval(reapOrphanPollers, 10 * 60_000).unref();
+setTimeout(reapOrphanPollers, 60_000).unref();
 // 状态写盘(带 300ms 尾随防抖):版本号即时推进(客户端热更新不受影响),
 // 但滑杆拖动一秒几十次 POST 时不再每次都同步写盘 —— 磁盘写风暴既伤盘也
 // 冻结事件循环。退出前 flush 见 shutdown 钩子。
@@ -1922,11 +1960,10 @@ server.on('error', (e) => {
     // 重启窗口期看门狗每 5s 拉一个,会积累出成群的僵尸 node 进程。
     console.error('[we-wallpaper] 端口被占用:已有实例在运行,本实例退出。');
   }
-  // 其它 listen 失败(EACCES 等)同样退出:活着但不监听的实例是永不自愈的僵尸,
-  // Startup keepalive 循环(wscript 每 5s 探活)会在 ≤5s 内拉起干净实例。
   // 走 shutdown 清理:listen 失败前 startNowPlayingPoller 已 spawn —— 实证它会成为
   // 孤儿(端口竞争败者遗弃常驻 PowerShell)。EADDRINUSE 在 listen 回调异步触发,
   // 而轮询 spawn 是同步代码,次序必然如此。
+  diagRecord('listen-error', { code: (e && e.code) || 'unknown', pid: process.pid });
   shutdown('listen-error');
 });
 server.listen(PORT, '127.0.0.1', () => {
@@ -1963,7 +2000,11 @@ setTimeout(() => {
 function shutdown(signal) {
   shuttingDown = true;
   clearTimeout(npRestartTimer);
-  try { if (nowPlayingProc) nowPlayingProc.kill(); } catch (e) {}   // 常驻轮询不随父进程自动退出,必须显式杀
+  let npKilled = null;
+  try {
+    if (nowPlayingProc) npKilled = nowPlayingProc.kill();   // 常驻轮询不随父进程自动退出,必须显式杀
+  } catch (e) {}
+  diagRecord('shutdown', { signal, pid: process.pid, hadPoller: !!nowPlayingProc, killSent: npKilled });
   try { flushStateNow(); } catch (e) {}
   try { cdpInjector.stop(); } catch (e) {}
   try { server.close(() => process.exit(0)); } catch (e) { process.exit(0); }

@@ -47,15 +47,13 @@ const check = (name, ok, detail) => results.push([ok ? 'PASS' : 'FAIL', name, de
     check('POST body 常规路径', typeof s.paused === 'boolean', '');
   } catch (e) { check('POST body 常规路径', false, e.message); }
 
-  // 5. 上传超限 413(content-length 头早退路径)
+  // 5. 上传超限 413(content-length 头早退路径)—— 用 curl:Node fetch 会拒绝伪造头
   try {
-    const r = await fetch(BASE + '/api/upload?filename=test.mp4', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/octet-stream', 'Content-Length': '5368709121' },   // 5GB 声明
-      body: 'x',
-    });
-    check('上传 4GB 上限', r.status === 413, 'status ' + r.status);
-    try { await r.text(); } catch {}
+    const { execFileSync } = require('child_process');
+    const out = execFileSync('curl', ['-s', '-o', 'NUL', '-w', '%{http_code}', '-X', 'POST',
+      '-H', 'Content-Length: 5368709121', '--data-binary', 'x',
+      BASE + '/api/upload?filename=cap-test.mp4'], { encoding: 'utf8', timeout: 20000 });
+    check('上传 4GB 上限', out.trim() === '413', 'status ' + out.trim());
   } catch (e) { check('上传 4GB 上限', false, e.message); }
 
   // 6. 上传正常路径(小文件)+ 半成品清理不误伤
