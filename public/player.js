@@ -552,6 +552,116 @@
     if (scrimEl) scrimEl.style.background = (Number(a.scrim) > 0 && Number.isFinite(Number(a.scrim))) ? 'rgba(0,0,0,' + (a.scrim / 100).toFixed(3) + ')' : 'transparent';
   }
 
+  // ── 光效层(源自 dsh-wallpaper-engine packages/fx 的精简忠实移植)──────────
+  // 点击涟漪 + 光标拖尾,画在壁纸上、HUD 之下(z-index 6),pointer-events:none
+  // 不接管任何输入;屏幕(screen)混合 = 只提亮不压暗,暗壁纸最像霓虹。
+  // 上游关键不变量照搬:内容驱动的 rAF(没有活着的点/圈就收工,空闲零 CPU)、
+  // 点数/点击数上限、DPR 上限 2、刻意不采样壁纸像素。挂载在 iframe 里时指针
+  // 事件经宿主(embed.js)转发 —— 壁纸层本身 pointer-events:none 收不到。
+  const FX_CLICK_LIFE_MS = 900, FX_TRAIL_MS = 420, FX_POINT_MAX = 96, FX_CLICK_MAX = 24, FX_TRAIL_STEP_PX = 3, FX_DPR_MAX = 2;
+  let fxCv = null, fxCtx = null, fxRaf = 0;
+  const fxPts = [], fxClicks = [];
+  let fxLastPt = null;
+  function fxColorFor(t) {
+    const mode = state.fxColorMode || 'accent';
+    if (mode === 'custom' && state.fxColor) return state.fxColor;
+    if (mode === 'rainbow') return 'hsl(' + Math.floor((t / 24) % 360) + ',90%,65%)';
+    return (state.appearance && state.appearance.accentColor) || '#4f8cff';
+  }
+  function fxEnsureHost() {
+    if (fxCv && fxCv.isConnected) return true;
+    if (!document.body || typeof document.createElement('canvas') === 'undefined') return false;
+    fxCv = document.createElement('canvas');
+    fxCv.id = 'we-fx-layer';
+    fxCv.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:6;mix-blend-mode:screen;opacity:.85;';
+    document.body.appendChild(fxCv);
+    fxCtx = fxCv.getContext('2d');
+    const fit = () => {
+      if (!fxCv) return;
+      const dpr = Math.min(FX_DPR_MAX, window.devicePixelRatio || 1);
+      fxCv.width = Math.max(1, Math.round(innerWidth * dpr));
+      fxCv.height = Math.max(1, Math.round(innerHeight * dpr));
+      if (fxCtx) fxCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    };
+    fit();
+    window.addEventListener('resize', fit, { passive: true });
+    return true;
+  }
+  function fxKick() {
+    if (fxRaf || document.hidden || !state.fxEnabled) return;
+    if (!fxEnsureHost()) return;
+    fxRaf = requestAnimationFrame(fxFrame);
+  }
+  function fxFrame(now) {
+    fxRaf = 0;
+    if (!fxCtx || !state.fxEnabled || document.hidden) { fxPts.length = 0; fxClicks.length = 0; return; }
+    const cut = now - FX_TRAIL_MS;
+    while (fxPts.length && fxPts[0].t < cut) fxPts.shift();
+    for (let i = fxClicks.length - 1; i >= 0; i--) if (now - fxClicks[i].t > FX_CLICK_LIFE_MS) fxClicks.splice(i, 1);
+    fxCtx.clearRect(0, 0, innerWidth, innerHeight);
+    // 拖尾(comet):相邻采样点连成按年龄收细、降透明的圆头光带
+    if (fxPts.length > 1) {
+      fxCtx.lineCap = 'round';
+      for (let i = 1; i < fxPts.length; i++) {
+        const a = fxPts[i - 1], b = fxPts[i];
+        const age = (now - b.t) / FX_TRAIL_MS;
+        const alpha = Math.max(0, 1 - age);
+        const col = b.c;
+        fxCtx.strokeStyle = col;
+        fxCtx.globalAlpha = alpha * 0.35;
+        fxCtx.lineWidth = 7 * alpha + 1;
+        fxCtx.beginPath(); fxCtx.moveTo(a.x, a.y); fxCtx.lineTo(b.x, b.y); fxCtx.stroke();
+        fxCtx.globalAlpha = alpha * 0.85;
+        fxCtx.lineWidth = 2.2 * alpha + 0.4;
+        fxCtx.beginPath(); fxCtx.moveTo(a.x, a.y); fxCtx.lineTo(b.x, b.y); fxCtx.stroke();
+      }
+      fxCtx.globalAlpha = 1;
+    }
+    // 点击涟漪(ripple):两圈扩散渐隐圆环 + 中心一次白闪
+    for (const c of fxClicks) {
+      const p = (now - c.t) / FX_CLICK_LIFE_MS;
+      const r = 14 + p * ((state.fxClickSize || 140) - 14);
+      const alpha = Math.max(0, 1 - p);
+      fxCtx.strokeStyle = c.c;
+      fxCtx.globalAlpha = alpha * 0.7;
+      fxCtx.lineWidth = 3 * alpha + 0.5;
+      fxCtx.beginPath(); fxCtx.arc(c.x, c.y, r, 0, Math.PI * 2); fxCtx.stroke();
+      fxCtx.globalAlpha = alpha * 0.35;
+      fxCtx.beginPath(); fxCtx.arc(c.x, c.y, r * 0.62, 0, Math.PI * 2); fxCtx.stroke();
+      fxCtx.globalAlpha = alpha * 0.9;
+      fxCtx.fillStyle = '#ffffff';
+      fxCtx.beginPath(); fxCtx.arc(c.x, c.y, 3.5 * (1 - p) + 0.5, 0, Math.PI * 2); fxCtx.fill();
+    }
+    fxCtx.globalAlpha = 1;
+    if (fxPts.length || fxClicks.length) fxRaf = requestAnimationFrame(fxFrame);   // 内容驱动:画完即收工
+  }
+  function fxMove(x, y) {
+    if (!state.fxEnabled || document.hidden) return;
+    if (fxLastPt) {
+      const dx = x - fxLastPt.x, dy = y - fxLastPt.y;
+      if (dx * dx + dy * dy < FX_TRAIL_STEP_PX * FX_TRAIL_STEP_PX) return;   // 采样间距:慢划不堆点
+    }
+    fxLastPt = { x, y };
+    fxPts.push({ x, y, t: performance.now(), c: fxColorFor(performance.now()) });
+    if (fxPts.length > FX_POINT_MAX) fxPts.shift();
+    fxKick();
+  }
+  function fxDown(x, y) {
+    if (!state.fxEnabled || document.hidden) return;
+    fxClicks.push({ x, y, t: performance.now(), c: fxColorFor(performance.now()) });
+    if (fxClicks.length > FX_CLICK_MAX) fxClicks.shift();
+    fxKick();
+  }
+  if (!EMBED) {   // 独立播放页:事件直达
+    window.addEventListener('pointermove', (e) => fxMove(e.clientX, e.clientY), { passive: true });
+    window.addEventListener('pointerdown', (e) => fxDown(e.clientX, e.clientY), { passive: true });
+  } else {        // 嵌入层:pointer-events:none 收不到,经宿主转发(embed.js 桥)
+    window.addEventListener('message', (e) => {
+      const d = e.data;
+      if (d && d.__wefx === 1) { if (d.t === 'm') fxMove(d.x, d.y); else if (d.t === 'd') fxDown(d.x, d.y); }
+    });
+  }
+
   // ── 亮度采样(智能可读性):视频帧/场景抓帧 → 平均亮度 → 上报服务器 ──
   var lumCanvas = document.createElement('canvas');
   lumCanvas.width = 64; lumCanvas.height = 36;
@@ -844,7 +954,7 @@
   function renderList() {
     const box = $('panel-list');
     box.innerHTML = '';
-    for (const w of wallpapers) {
+    for (const w of wallpapers.filter((x) => !x.hidden)) {
       const item = document.createElement('div');
       item.className = 'wp-item' + (w.id === state.currentId ? ' wp-item--current' : '')
         + (w.playable ? '' : ' wp-item--unplayable');

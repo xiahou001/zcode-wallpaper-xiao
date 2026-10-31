@@ -391,6 +391,14 @@
       mo.observe(document.body || document.documentElement, { childList: true, subtree: true });
       setTimeout(function () { mo.disconnect(); mountWhenAppReady(); }, 2500);
     })();
+    // ── 光效指针桥:壁纸层 iframe 是 pointer-events:none,宿主代收指针并转发。
+    // 被动监听 + postMessage('**');fx 关闭时播放层直接丢弃,这里零判断零状态。
+    window.addEventListener('pointermove', function (e) {
+      try { if (frame && frame.contentWindow) frame.contentWindow.postMessage({ __wefx: 1, t: 'm', x: e.clientX, y: e.clientY }, '*'); } catch (e2) {}
+    }, { passive: true });
+    window.addEventListener('pointerdown', function (e) {
+      try { if (frame && frame.contentWindow) frame.contentWindow.postMessage({ __wefx: 1, t: 'd', x: e.clientX, y: e.clientY }, '*'); } catch (e2) {}
+    }, { passive: true });
     // 一次性 DOM 抓取:从"输入框所在的屏幕位置"反查元素链,用于精确定位遮挡壁纸的容器
     setTimeout(dumpComposerRegion, 4000);
     setTimeout(dumpComposerRegion, 15000);

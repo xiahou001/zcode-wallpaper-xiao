@@ -196,7 +196,7 @@
       content.appendChild(empty);
     }
 
-    content.appendChild(el('div', 'sec', '选择壁纸(' + wallpapers.filter(function (x) { return x.playable; }).length + ' 张可用)'));
+    content.appendChild(el('div', 'sec', '选择壁纸(' + wallpapers.filter(function (x) { return x.playable && !x.hidden; }).length + ' 张可用)'));
     // 类型筛选(源自 DSH typeFilter):chips 即时过滤网格
     var typeRow = el('div', 'row');
     typeRow.style.flexWrap = 'wrap';
@@ -206,7 +206,7 @@
       typeRow.appendChild(b);
     });
     content.appendChild(typeRow);
-    var shown = wallpapers.filter(function (x) { return typeFilter === 'all' || x.type === typeFilter; });
+    var shown = wallpapers.filter(function (x) { return (typeFilter === 'all' || x.type === typeFilter) && !x.hidden; });
     var grid = el('div', 'grid');
     shown.forEach(function (wp) {
       var card = el('div', 'card' + (state.currentId === wp.id ? ' current' : '') + (wp.playable ? '' : ' dead'));
@@ -215,9 +215,66 @@
       var name = el('div', 'name', wp.title);
       name.appendChild(el('span', 'badge', typeLabel(wp)));
       card.appendChild(img); card.appendChild(name);
+      // 隐藏按钮(软删除,源自 DSH hiddenIds):离开网格与轮播,可在下方"已隐藏"恢复
+      var hideB = el('button', 'btn', '隐藏');
+      hideB.title = '从清单和轮播里隐藏(正在播放的不打断);可在下方"已隐藏"里恢复';
+      hideB.style.cssText = 'position:absolute;top:4px;right:4px;opacity:0;transition:opacity .15s;font-size:11px;padding:2px 7px;';
+      hideB.onclick = function (ev) {
+        ev.stopPropagation();
+        api('/api/hide', { id: wp.id, hidden: true }).then(function (s) { state = s; render(); });
+      };
+      card.style.position = 'relative';
+      card.onpointerenter = function () { preheat(wp); hideB.style.opacity = '.85'; };
+      card.onpointerleave = function () { hideB.style.opacity = '0'; };
+      card.appendChild(hideB);
       grid.appendChild(card);
     });
     content.appendChild(grid);
+    // 已隐藏区(软删除的恢复入口;空则整块不渲染)
+    var hiddenOnes = wallpapers.filter(function (x) { return x.hidden; });
+    if (hiddenOnes.length) {
+      content.appendChild(el('div', 'sec', '已隐藏(' + hiddenOnes.length + ')'));
+      var hRow = el('div', 'row');
+      hRow.style.flexWrap = 'wrap';
+      hiddenOnes.forEach(function (wp) {
+        var rb = el('button', 'btn', '↺ ' + wp.title);
+        rb.title = '恢复显示(回到清单与轮播)';
+        rb.onclick = function () { api('/api/hide', { id: wp.id, hidden: false }).then(function (s) { state = s; render(); }); };
+        hRow.appendChild(rb);
+      });
+      content.appendChild(hRow);
+      content.appendChild(el('div', 'muted', '隐藏 = 软删除:退出清单与轮播但不删文件;正在播放的那张不打断。'));
+    }
+    // 自定义壁纸管理(源自上游 upload-store 的用量可见性):体积清单 + 单个删除
+    var customOnes = wallpapers.filter(function (x) { return String(x.id).indexOf('custom-') === 0; });
+    if (customOnes.length) {
+      content.appendChild(el('div', 'sec', '自定义壁纸管理'));
+      var boxC = el('div', 'plistbox');
+      boxC.textContent = '统计中…';
+      content.appendChild(boxC);
+      api('/api/custom-usage').then(function (u) {
+        boxC.innerHTML = '';
+        boxC.id = 'wb-custom';
+        if (!u || !(u.items || []).length) { boxC.textContent = '没有自定义壁纸'; return; }
+        var total = el('div', 'muted', '共 ' + u.items.length + ' 个 · 合计 ' + (u.totalBytes / 1048576).toFixed(1) + ' MB(存于 ~/.we-wallpaper/custom)');
+        boxC.appendChild(total);
+        (u.items || []).forEach(function (it) {
+          var r = el('div', 'row');
+          r.appendChild(el('span', null, it.title + '(' + (it.bytes / 1048576).toFixed(1) + ' MB)' + (it.current ? ' · 正在播放' : '')));
+          var sp = el('span', null, ''); sp.style.flex = '1';
+          r.appendChild(sp);
+          var del = el('button', 'btn danger', '删除');
+          del.title = it.current ? '正在播放,先切换到别的壁纸再删' : '删除这张自定义壁纸(文件一并删除,不可恢复)';
+          del.onclick = function () {
+            if (!window.confirm('删除「' + it.title + '」?文件将一并删除,不可恢复。')) return;
+            api('/api/custom-delete', { id: it.id }).then(function () { return loadData(); }).then(render)
+              .catch(function () {});
+          };
+          r.appendChild(del);
+          boxC.appendChild(r);
+        });
+      }).catch(function () { boxC.textContent = '用量统计不可用'; });
+    }
   }
 
   // ── 外观 ─────────────────────────────────────────────────
@@ -345,6 +402,31 @@
       slider(content, '壁纸透明度', state.appearance.opacity != null ? state.appearance.opacity : 100, 10, 100, function (v) { state.appearance.opacity = v; api('/api/appearance', { opacity: v }); });
       slider(content, '暗化层', state.appearance.scrim != null ? state.appearance.scrim : 0, 0, 80, function (v) { state.appearance.scrim = v; api('/api/appearance', { scrim: v }); });
       content.appendChild(el('div', 'muted', '透明度调低让壁纸融向深色底(看得见但不喧宾夺主);暗化层在壁纸上加黑罩,亮壁纸+浅色字看不清时优先用它。'));
+
+      // ── 光效(源自 dsh-wallpaper-engine packages/fx):点击涟漪/光标拖尾,默认关 ──
+      content.appendChild(el('div', 'sec', '光效(点击涟漪 / 拖尾)'));
+      var fxRow = el('div', 'row');
+      var fxB = el('button', 'btn' + (state.fxEnabled ? ' on' : ''), state.fxEnabled ? '● 光效已开启' : '○ 光效已关闭');
+      fxB.title = '鼠标点击时炸开一圈涟漪、划过时留下会自行淡完的拖尾;装饰层不接管任何输入,空闲时零 CPU';
+      fxB.onclick = function () { api('/api/advanced', { fxEnabled: !state.fxEnabled }).then(function (s) { state = s; render(); }); };
+      fxRow.appendChild(fxB);
+      var fSel = document.createElement('select');
+      [['accent', '跟随强调色'], ['rainbow', '彩虹流转'], ['custom', '自定义颜色']].forEach(function (p) {
+        var o = document.createElement('option'); o.value = p[0]; o.textContent = p[1];
+        if ((state.fxColorMode || 'accent') === p[0]) o.selected = true;
+        fSel.appendChild(o);
+      });
+      fSel.onchange = function () { api('/api/advanced', { fxColorMode: fSel.value }).then(function (s) { state = s; render(); }); };
+      fxRow.appendChild(fSel);
+      var fxIn = document.createElement('input');
+      fxIn.type = 'color';
+      fxIn.value = /^#[0-9a-f]{6}$/i.test(state.fxColor || '') ? state.fxColor : '#4f8cff';
+      fxIn.title = '自定义光效颜色(配色档选"自定义颜色"时生效)';
+      fxIn.style.cssText = 'width:34px;height:26px;padding:0;border:0;background:transparent;cursor:pointer;' + ((state.fxColorMode || 'accent') === 'custom' ? '' : 'opacity:.45;');
+      fxIn.onchange = function () { api('/api/advanced', { fxColor: fxIn.value, fxColorMode: 'custom' }).then(function (s) { state = s; render(); }); };
+      fxRow.appendChild(fxIn);
+      content.appendChild(fxRow);
+      content.appendChild(el('div', 'muted', '画在壁纸上、界面之下,screen 混合只提亮不压暗;聊天窗口与播放页同时生效。'));
 
       content.appendChild(el('div', 'sec', '智能可读性(源自 dsh-wallpaper-engine 的主题跟随)'));
       var rr = el('div', 'row');
@@ -489,6 +571,22 @@
       customColor.onchange = function () { api('/api/appearance', { glassColor: customColor.value }).then(function (s) { state = s; render(); }); };
       swRow.appendChild(customColor);
       content.appendChild(swRow);
+      // 深色壁纸时的玻璃颜色(空 = 跟随主玻璃色;上游 glassDarkSeparate 思路)
+      var darkManual = /^#[0-9a-f]{6}$/i.test(state.appearance.glassColorDark || '');
+      var swRow2 = el('div', 'row');
+      swRow2.appendChild(el('label', null, '深色壁纸玻璃色'));
+      var darkIn = document.createElement('input');
+      darkIn.type = 'color';
+      darkIn.value = darkManual ? state.appearance.glassColorDark : curGlass;
+      darkIn.title = '壁纸偏暗时的聊天框玻璃色;自动 = 与主玻璃色一致';
+      darkIn.style.cssText = 'width:34px;height:26px;padding:0;border:0;background:transparent;cursor:pointer;';
+      darkIn.oninput = function () { state.appearance.glassColorDark = darkIn.value; api('/api/appearance', { glassColorDark: darkIn.value }); };
+      darkIn.onchange = function () { api('/api/appearance', { glassColorDark: darkIn.value }).then(function (s) { state = s; render(); }); };
+      swRow2.appendChild(darkIn);
+      var darkAuto = el('button', 'btn' + (darkManual ? '' : ' on'), darkManual ? '手动' : '● 跟随主色');
+      darkAuto.onclick = function () { api('/api/appearance', { glassColorDark: '' }).then(function (s) { state = s; render(); }); };
+      swRow2.appendChild(darkAuto);
+      content.appendChild(swRow2);
       content.appendChild(el('div', 'muted', '当前玻璃颜色 ' + curGlass + ';浅色玻璃会自动切换成深色文字。'));
       slider(content, '聊天框玻璃透明度', state.appearance.glass, 0, 100, function (v) { state.appearance.glass = v; api('/api/appearance', { glass: v }); });
       content.appendChild(el('div', 'muted', '玻璃透明度:0 = 完全实心,100 = 最透(最能看清壁纸)。改动约 5 秒内自动应用,不需要重启 ZCode。'));

@@ -4,13 +4,17 @@ export const DEFAULTS = {
   currentId: null, paused: false, volume: 1,
   rotate: { enabled: false, intervalMin: 30, playlist: null, random: false },
   transition: { kind: 'crossfade', ms: 1800 },
-  appearance: { main: 0, row: 52, sidebar: 55, brightness: 100, stroke: 35, zoom: 100, blur: 22, glass: 50, glassColor: '#14161c', fontFamily: '', cursor: '', filter: 'none', fontColor: '', fontColorSidebar: '', fontColorComposer: '', fit: 'cover', themeMode: 'auto', accentColor: '', flip: false, bgBrightness: 100, bgContrast: 100, bgSaturate: 100, opacity: 100, scrim: 0, caretColor: '' },
+  appearance: { main: 0, row: 52, sidebar: 55, brightness: 100, stroke: 35, zoom: 100, blur: 22, glass: 50, glassColor: '#14161c', glassColorDark: '', fontFamily: '', cursor: '', filter: 'none', fontColor: '', fontColorSidebar: '', fontColorComposer: '', fit: 'cover', themeMode: 'auto', accentColor: '', flip: false, bgBrightness: 100, bgContrast: 100, bgSaturate: 100, opacity: 100, scrim: 0, caretColor: '' },
   videoRate: 1,         // 视频壁纸播放倍速(0.5~2,源自 DSH playbackRate)
   readability: { auto: true }, occlusion: 'hidden', sceneFps: 30, videoFpsCap: 0, playlists: [], workshopDirs: [],
   lyrics: false,        // 在线歌词跑马灯(默认关闭,与 DSH 一致)
   contentFilter: false, // 内容分级过滤:隐藏 R 级壁纸(DSH 功能)
   weAssetsDir: null,    // WE 官方素材目录(手动覆盖;null=自动探测 Steam 库,localAssets 功能)
   batteryPause: false,  // 电池供电时自动暂停(源自 DSH pauseOnBattery;仅笔记本有效)
+  hiddenIds: [],        // 隐藏的壁纸 id(源自 DSH hiddenIds 软删除:离开清单与轮播,正在播的不打断)
+  fxEnabled: false,     // 光效总开关(源自 DSH fxEnabled:点击涟漪/光标拖尾,默认关)
+  fxColorMode: 'accent',  // 光效配色:accent=跟随强调色 / rainbow=流转彩虹 / custom=自定义色
+  fxColor: '',          // 自定义光效色(仅 fxColorMode=custom 时生效)
 };
 const num = (v, min, max, fallback) => { const n = Number(v); return Number.isFinite(n) ? Math.max(min, Math.min(max, n)) : fallback; };
 // 壁纸滤镜白名单(与 player.js 的 WALLPAPER_FILTERS 一一对应)
@@ -71,6 +75,10 @@ export function sanitizeState(input = {}) {
   s.appearance.caretColor = /^#[0-9a-f]{6}$/i.test(String(s.appearance.caretColor || ''))
     ? String(s.appearance.caretColor).toLowerCase()
     : '';
+  // 深色壁纸时的玻璃颜色('' = 跟随主玻璃色,即保持单一玻璃色的旧行为)
+  s.appearance.glassColorDark = /^#[0-9a-f]{6}$/i.test(String(s.appearance.glassColorDark || ''))
+    ? String(s.appearance.glassColorDark).toLowerCase()
+    : '';
   s.videoRate = num(input.videoRate, 0.5, 2, 1);   // 视频倍速(0.5~2 连续值)
   // 自定义外观预设:只保留名字与外观快照,上限 12 个(防状态文件无限膨胀)
   s.appearancePresets = Array.isArray(input.appearancePresets)
@@ -100,5 +108,14 @@ export function sanitizeState(input = {}) {
   s.sceneFailures = (input.sceneFailures && typeof input.sceneFailures === 'object' && !Array.isArray(input.sceneFailures))
     ? Object.fromEntries(Object.entries(input.sceneFailures).slice(0, 200).map(([k]) => [String(k).slice(0, 64), true]))
     : {};
+  // 隐藏的壁纸(软删除,源自 DSH hiddenIds):离开清单/轮播但可随时恢复;
+  // id 只收壁纸 id 形态(字母数字_-),上限 500
+  s.hiddenIds = Array.isArray(input.hiddenIds)
+    ? input.hiddenIds.map(String).filter((x) => /^[A-Za-z0-9_-]{1,64}$/.test(x)).slice(0, 500)
+    : [];
+  // 光效(源自 DSH fx*):默认关
+  s.fxEnabled = Boolean(input.fxEnabled);
+  s.fxColorMode = ['accent', 'rainbow', 'custom'].includes(input.fxColorMode) ? input.fxColorMode : 'accent';
+  s.fxColor = /^#[0-9a-f]{6}$/i.test(String(input.fxColor || '')) ? String(input.fxColor).toLowerCase() : '';
   return s;
 }

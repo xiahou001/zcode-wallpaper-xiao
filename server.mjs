@@ -364,7 +364,7 @@ function refreshInventory(force = false) {
   return inventory;
 }
 
-/** 让状态跟随壁纸库:已删除/退订的壁纸从当前选择和轮播列表里移除。 */
+/** 让状态跟随壁纸库:已删除/退订的壁纸从当前选择、轮播列表和隐藏名单里移除。 */
 function pruneStateToList() {
   const ids = new Set(inventory.map((w) => w.id));
   let changed = false;
@@ -376,6 +376,9 @@ function pruneStateToList() {
   if (state.rotate.playlist && !state.playlists.some((pl) => pl.name === state.rotate.playlist)) {
     state.rotate.playlist = null; changed = true;
   }
+  const hidBefore = (state.hiddenIds || []).length;
+  state.hiddenIds = (state.hiddenIds || []).filter((id) => ids.has(id));
+  if (state.hiddenIds.length !== hidBefore) changed = true;
   if (changed) saveState();
   return changed;
 }
@@ -893,14 +896,17 @@ function scheduleRotation() {
     const pool = pl
       ? [...new Set(pl.ids)].map((id) => inventory.find((w) => w.id === id)).filter(ok)
       : inventory.filter(ok);
-    if (pool.length < 1) return;
-    if (state.rotate.random && pool.length > 1) {
+    // 隐藏的壁纸不进轮播池(软删除语义;正在播的那张不受影响,只是不再被轮到)
+    const hiddenSet = new Set(state.hiddenIds || []);
+    const pool2 = pool.filter((w) => !hiddenSet.has(w.id));
+    if (pool2.length < 1) return;
+    if (state.rotate.random && pool2.length > 1) {
       // 随机模式:排除当前张再抽(避免"随机到同一张"空转一轮)
-      const rest = pool.filter((w) => w.id !== state.currentId);
+      const rest = pool2.filter((w) => w.id !== state.currentId);
       state.currentId = rest[Math.floor(Math.random() * rest.length)].id;
     } else {
-      const idx = pool.findIndex((w) => w.id === state.currentId);
-      state.currentId = pool[(idx + 1) % pool.length].id;
+      const idx = pool2.findIndex((w) => w.id === state.currentId);
+      state.currentId = pool2[(idx + 1) % pool2.length].id;
     }
     state.paused = false;
     saveState();
@@ -1095,6 +1101,7 @@ const server = http.createServer(async (req, res) => {
             id: w.id, title: w.title, type: w.type, playable: w.playable,
             contentrating: w.contentrating || null,
             schemeLum: w.schemeLum != null ? w.schemeLum : null,   // 作者配色 WCAG 亮度(主题秒判用)
+            hidden: (state.hiddenIds || []).includes(w.id),        // 软删除标记:客户端从网格/轮播里隐去
             preview: w.previewAbs ? `/preview/${w.id}` : null,
             hasPkg: w.type === 'scene',
             sceneBase,                                   // scene:渲染页 src 段(其下拼 scene.pkg)
@@ -1131,7 +1138,7 @@ const server = http.createServer(async (req, res) => {
     // 场景壁纸渲染失败;之后选择/轮换到它直接走视频降级,不再每次白等整包下载。
     if (p === '/api/scene-fail' && method === 'POST') {
       const body = JSON.parse((await readBody(req)) || '{}');
-      const id = String(body.id || '').slice(0, 64);
+      const id = /^[A-Za-z0-9_-]{1,64}$/.test(String(body.id || '')) ? String(body.id) : '';
       if (id) {
         state.sceneFailures = state.sceneFailures || {};
         if (!state.sceneFailures[id]) {
@@ -1145,12 +1152,56 @@ const server = http.createServer(async (req, res) => {
     // 清除失败记忆:id 缺省 = 全部清空(工作台「重试场景渲染」按钮)。
     if (p === '/api/scene-retry' && method === 'POST') {
       const body = JSON.parse((await readBody(req)) || '{}');
-      const id = String(body.id || '').slice(0, 64);
+      const id = /^[A-Za-z0-9_-]{1,64}$/.test(String(body.id || '')) ? String(body.id) : '';
       const before = Object.keys(state.sceneFailures || {}).length;
       if (id) delete state.sceneFailures[id];
       else state.sceneFailures = {};
       saveState();
       diagRecord('scene-fallback-retry', { id: id || '(all)', cleared: before - Object.keys(state.sceneFailures || {}).length });
+      return sendJSON(res, 200, state);
+    }
+    // 隐藏壁纸(软删除,源自 DSH hiddenIds):离开清单/轮播;正在播的不打断,可随时恢复。
+    // id 字符集白名单:工坊数字 id 与 custom-<时间戳>,杜绝任意串入库。
+    if (p === '/api/hide' && method === 'POST') {
+      const body = JSON.parse((await readBody(req)) || '{}');
+      const id = /^[A-Za-z0-9_-]{1,64}$/.test(String(body.id || '')) ? String(body.id) : '';
+      if (id) {
+        state.hiddenIds = state.hiddenIds || [];
+        if (body.hidden) {
+          if (!state.hiddenIds.includes(id)) state.hiddenIds.push(id);
+        } else {
+          state.hiddenIds = state.hiddenIds.filter((x) => x !== id);
+        }
+        saveState();
+      }
+      return sendJSON(res, 200, state);
+    }
+    // 自定义壁纸管理:用量清单(custom-* 的文件体积)与单个删除。
+    if (p === '/api/custom-usage' && method === 'GET') {
+      const items = [];
+      let totalBytes = 0;
+      for (const w of inventory) {
+        if (!w.id.startsWith('custom-')) continue;
+        let bytes = 0;
+        try { bytes = fs.statSync(w.fileAbs).size; } catch {}
+        items.push({ id: w.id, title: w.title, type: w.type, bytes, current: w.id === state.currentId });
+        totalBytes += bytes;
+      }
+      return sendJSON(res, 200, { items, totalBytes });
+    }
+    if (p === '/api/custom-delete' && method === 'POST') {
+      const body = JSON.parse((await readBody(req)) || '{}');
+      const id = String(body.id || '');
+      if (!id.startsWith('custom-')) return sendJSON(res, 400, { error: '只能删除自定义壁纸' });
+      if (id === state.currentId) return sendJSON(res, 400, { error: '这张壁纸正在播放,先切换到别的再删' });
+      const dir = path.join(APP_DIR, 'custom', id);
+      if (!fs.existsSync(dir)) return sendJSON(res, 404, { error: 'no such custom wallpaper' });
+      try { fs.rmSync(dir, { recursive: true, force: true }); } catch (e) {
+        return sendJSON(res, 500, { error: String(e.message).slice(0, 120) });
+      }
+      state.hiddenIds = (state.hiddenIds || []).filter((x) => x !== id);
+      syncInventory(true);
+      diagRecord('custom-deleted', { id });
       return sendJSON(res, 200, state);
     }
     if (p === '/api/select' && method === 'POST') {
@@ -1303,6 +1354,11 @@ const server = http.createServer(async (req, res) => {
       if (body.caretColor != null) {
         const cc = String(body.caretColor).trim();
         state.appearance.caretColor = /^#[0-9a-f]{6}$/i.test(cc) ? cc.toLowerCase() : '';
+      }
+      // 深色壁纸时的玻璃颜色('' = 跟随主玻璃色)
+      if (body.glassColorDark != null) {
+        const gd = String(body.glassColorDark).trim();
+        state.appearance.glassColorDark = /^#[0-9a-f]{6}$/i.test(gd) ? gd.toLowerCase() : '';
       }
       saveState();
       return sendJSON(res, 200, state);
@@ -1506,6 +1562,13 @@ const server = http.createServer(async (req, res) => {
       if (body.videoRate != null) state.videoRate = Math.max(0.5, Math.min(2, Number(body.videoRate) || 1));   // 视频倍速(DSH playbackRate)
       if (body.videoFpsCap != null) state.videoFpsCap = [0, 15, 30, 60].includes(Number(body.videoFpsCap)) ? Number(body.videoFpsCap) : state.videoFpsCap;
       if (body.contentFilter != null) state.contentFilter = !!body.contentFilter;
+      // 光效(源自 DSH fx*):总开关/配色档/自定义色
+      if (body.fxEnabled != null) state.fxEnabled = !!body.fxEnabled;
+      if (body.fxColorMode != null && ['accent', 'rainbow', 'custom'].includes(String(body.fxColorMode))) state.fxColorMode = String(body.fxColorMode);
+      if (body.fxColor != null) {
+        const fc = String(body.fxColor).trim();
+        state.fxColor = /^#[0-9a-f]{6}$/i.test(fc) ? fc.toLowerCase() : '';
+      }
       saveState();
       return sendJSON(res, 200, state);
     }
@@ -1656,7 +1719,8 @@ const server = http.createServer(async (req, res) => {
         const n = parseInt(m[1], 16);
         return (0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255)) / 255;
       };
-      const glassBase = a.glassColor || lightBase;
+      const glassBase = lightWall ? (a.glassColor || lightBase)
+        : (a.glassColorDark || a.glassColor || lightBase);   // 深色侧单独玻璃色(空=跟随主色,上游 glassDarkSeparate 思路)
       const glassLight = hexLum(glassBase) > 0.55;              // 玻璃本身偏亮?
       // 聊天框文字:fontColorComposer 空 = 按玻璃明暗自动(聊天框底色是玻璃,与主区亮度无关)
       const glassFg = a.fontColorComposer || (glassLight ? '#1b1e24' : '#eef1f6');
@@ -1990,6 +2054,17 @@ const cdpInjector = startCdpInjector({
 setTimeout(() => {
   sweepStaleCacheOnBoot();   // 指纹命名升级前留下的旧变体一次性回收
   sweepMediaCache();         // 启动先过一遍预算
+  // 转码/重排半成品即弃(源自上游 startup-sweep 口径):上个进程可能死在
+  // ffmpeg 中途,detached 子进程留下的 .tmp/.part 不可能属于本进程,直接回收
+  // —— 不等 7 天清扫,防止崩溃残留积累到 GB 级。
+  for (const kind of ['faststart', 'transcode']) {
+    let names;
+    try { names = fs.readdirSync(mediaCacheDir(kind)); } catch { continue; }
+    for (const f of names) {
+      if (!/\.(tmp|part\.mp4)$/i.test(f)) continue;
+      try { fs.rmSync(path.join(mediaCacheDir(kind), f), { force: true }); } catch {}
+    }
+  }
   warmFaststartOnBoot();     // 轮换列表视频预热 moov 前置(后台串行,不阻塞服务)
 }, 3000).unref();
 
