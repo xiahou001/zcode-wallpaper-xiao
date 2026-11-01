@@ -916,9 +916,11 @@
   if (EMBED) {
     let myVersion = null;
     setInterval(function () {
+      // 只在窗口不可见时重载:可见时重载 iframe 有抢聊天输入焦点的风险(打断打字);
+      // 基线不更新,窗口一隐藏(切走/最小化)立即补刷
       fetch('/api/version', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (v) {
         if (myVersion === null) { myVersion = v.v; return; }
-        if (v.v !== myVersion) location.reload();   // 代码有更新:自刷新
+        if (v.v !== myVersion && document.hidden) { myVersion = v.v; location.reload(); }
       }).catch(function () {});
     }, 5000);
   }

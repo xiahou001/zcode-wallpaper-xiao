@@ -1084,7 +1084,7 @@
         var ae = null;
         try { ae = document.activeElement; } catch (e) {}
         var busy = ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.tagName === 'SELECT');
-        if (document.hidden || !busy) { wbVersion = v.v; location.reload(); }
+        var modal = false; try { modal = window.parent && window.parent !== window; } catch (e) {} var safe = modal ? document.hidden : (document.hidden || !busy); if (v.v !== wbVersion && safe) { wbVersion = v.v; location.reload(); }
       }).catch(function () { wbCheckBusy = false; });
   }
   (function () {
