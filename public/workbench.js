@@ -40,10 +40,10 @@
     return e;
   }
   // ── 工作台玻璃磨砂(材质与聊天框同一套设置)────────────────────────────────
-  // 模态里:宿主 overlay 已把壁纸+聊天 UI 整体模糊,本页 body 用半透明玻璃染色
-  // 透出磨砂壁纸;独立访问:html 深色兜底,观感如旧。染色透明度与聊天框同映射
-  // (96-0.88*glass),但向可读性收 30% —— 工作台是控制面板,文字优先。
-  // JS 失败时 html 深色兜底仍在,模态退化为不透明(= 旧观感),无白屏风险。
+  // 模态:宿主 overlay 已把壁纸+聊天 UI 整体模糊,本页 body 半透明染色透出磨砂壁纸;
+  // 独立:html 深色底 + .wb-bg 极光艺术层,面板 backdrop-filter 真实取糊它。
+  // 染色透明度与聊天框同映射(96-0.88*glass),但向可读性收 30% —— 工作台是
+  // 控制面板,文字优先。JS 失败时 html 深色兜底,全部退化 = 旧观感,无白屏风险。
   var glassStyleEl = null;
   function applyGlassTint() {
     if (!state || !state.appearance) return;
@@ -63,8 +63,11 @@
       glassStyleEl.id = 'wb-glass';
       document.head.appendChild(glassStyleEl);
     }
-    glassStyleEl.textContent = 'html { background: ' + (modal ? 'transparent' : '#101216') + '; }'
-      + 'body { background: rgba(' + rgb.join(',') + ',' + (wb / 100).toFixed(2) + ') !important; }';
+    glassStyleEl.textContent = 'html { background: ' + (modal ? 'transparent' : '#0b0d11') + '; }'
+      + ':root { --wb-glass-rgb: ' + rgb.join(',') + '; }'
+      + (modal ? 'body { background: rgba(' + rgb.join(',') + ',' + (wb / 100).toFixed(2) + ') !important; }'
+               : 'body { background: transparent !important; }');
+    document.documentElement.classList.toggle('standalone', !modal);   // 独立模式才显示极光底
   }
   // 悬停预取:提前触发服务端的 faststart 重排与元数据 Range 请求,
   // 点击播放时首帧立即可得(单槽 + 60s TTL,避免重复预热)

@@ -1,22 +1,48 @@
 /* workbench — DSH 式壁纸工作台(独立页/模态两用)
-   玻璃磨砂:模态里 overlay(宿主页)已把壁纸+聊天 UI 整体模糊,本页 body 只需
-   半透明玻璃染色即可透出磨砂壁纸;独立访问时 html 深色兜底(looks 原样)。
-   染色的色相/透明度由 workbench.js 按外观设置的玻璃颜色注入(#wb-glass)。 */
+   玻璃磨砂材质(与聊天框同一套材质语言):
+   · 模态:宿主 overlay 已把壁纸+聊天 UI 整体模糊,本页 body 半透明染色透出磨砂壁纸;
+   · 独立:html 深色底 + .wb-bg 极光渐变艺术层,面板 backdrop-filter 真实取糊它;
+   · 面板材质 = 半透明面 + blur+饱和 + 1px 高光描边 + 顶部釉光渐变(液态玻璃签名)。
+   染色色相由 workbench.js 按外观设置的玻璃颜色注入(--wb-glass-rgb);JS 失败时
+   html 深色兜底,全部规则退化 = 旧观感,无白屏风险。 */
 * { box-sizing: border-box; margin: 0; font-family: "Segoe UI", system-ui, sans-serif; }
 /* 原生控件(下拉/滚动条/勾选框)统一深色,避免白底下拉和暗色玻璃冲突 */
 :root { color-scheme: dark; }
 html, body { width: 100%; height: 100%; overflow: hidden; }
-html { background: #101216; }   /* 独立访问兜底;模态里 workbench.js 置透明透出磨砂层 */
+html { background: #0b0d11; }
 body { background: transparent; color: #eef1f6; font-size: 13px; }
 select, option { background-color: #1a1c22; color: #eef1f6; }
 option:checked { background-color: #2a3242; color: #ffffff; }
 
-.app { display: flex; width: 100%; height: 100%; }
+/* 极光底(仅独立模式显示;模态里真壁纸就是艺术层,这个必须让位) */
+.wb-bg { display: none; }
+.standalone .wb-bg {
+  display: block; position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background:
+    radial-gradient(52% 44% at 14% 12%, rgba(255, 158, 207, .16), transparent 68%),
+    radial-gradient(48% 42% at 86% 10%, rgba(56, 132, 255, .13), transparent 70%),
+    radial-gradient(56% 50% at 72% 92%, rgba(var(--wb-glass-rgb, 20, 22, 28), .55), transparent 72%),
+    radial-gradient(40% 38% at 8% 86%, rgba(94, 224, 197, .08), transparent 70%),
+    linear-gradient(180deg, #0d1017, #0b0d11);
+}
+
+.app { position: relative; z-index: 1; display: flex; width: 100%; height: 100%; }
+
+/* 玻璃面板公共材质:半透明面 + 取糊 + 高光描边 + 顶部釉光 */
+.nav, .hero, .plistbox {
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.055), rgba(255,255,255,.015) 42%),
+    rgba(var(--wb-glass-rgb, 20, 22, 28), .38);
+  backdrop-filter: blur(22px) saturate(1.25);
+  -webkit-backdrop-filter: blur(22px) saturate(1.25);
+  border: 1px solid rgba(255,255,255,.10);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.07), 0 12px 34px rgba(0,0,0,.30);
+}
 
 /* 左侧导航 */
 .nav {
   flex: 0 0 200px; display: flex; flex-direction: column;
-  background: rgba(10, 12, 16, .38); border-right: 1px solid rgba(255,255,255,.08);
+  border-top: 0; border-bottom: 0; border-left: 0;
   padding: 14px 10px;
 }
 .brand { display: flex; gap: 10px; align-items: center; padding: 4px 6px 16px; }
@@ -49,7 +75,6 @@ option:checked { background-color: #2a3242; color: #ffffff; }
 /* 当前壁纸 hero */
 .hero {
   display: flex; gap: 18px; align-items: center;
-  background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.09);
   border-radius: 14px; padding: 16px 18px;
 }
 .disc {
