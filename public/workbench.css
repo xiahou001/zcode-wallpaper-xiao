@@ -1,9 +1,13 @@
-/* workbench — DSH 式壁纸工作台(独立页/模态两用) */
+/* workbench — DSH 式壁纸工作台(独立页/模态两用)
+   玻璃磨砂:模态里 overlay(宿主页)已把壁纸+聊天 UI 整体模糊,本页 body 只需
+   半透明玻璃染色即可透出磨砂壁纸;独立访问时 html 深色兜底(looks 原样)。
+   染色的色相/透明度由 workbench.js 按外观设置的玻璃颜色注入(#wb-glass)。 */
 * { box-sizing: border-box; margin: 0; font-family: "Segoe UI", system-ui, sans-serif; }
 /* 原生控件(下拉/滚动条/勾选框)统一深色,避免白底下拉和暗色玻璃冲突 */
 :root { color-scheme: dark; }
 html, body { width: 100%; height: 100%; overflow: hidden; }
-body { background: #14161c; color: #eef1f6; font-size: 13px; }
+html { background: #101216; }   /* 独立访问兜底;模态里 workbench.js 置透明透出磨砂层 */
+body { background: transparent; color: #eef1f6; font-size: 13px; }
 select, option { background-color: #1a1c22; color: #eef1f6; }
 option:checked { background-color: #2a3242; color: #ffffff; }
 
@@ -12,7 +16,7 @@ option:checked { background-color: #2a3242; color: #ffffff; }
 /* 左侧导航 */
 .nav {
   flex: 0 0 200px; display: flex; flex-direction: column;
-  background: rgba(10, 12, 16, .55); border-right: 1px solid rgba(255,255,255,.08);
+  background: rgba(10, 12, 16, .38); border-right: 1px solid rgba(255,255,255,.08);
   padding: 14px 10px;
 }
 .brand { display: flex; gap: 10px; align-items: center; padding: 4px 6px 16px; }
@@ -34,7 +38,10 @@ option:checked { background-color: #2a3242; color: #ffffff; }
 .navfoot { margin-top: auto; font-size: 10px; opacity: .4; padding: 6px 8px; }
 
 /* 内容区 */
-.content { flex: 1; overflow-y: auto; padding: 20px 24px; scrollbar-width: thin; }
+.content { flex: 1; overflow-y: auto; padding: 20px 24px; scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.16) transparent; }
+.content::-webkit-scrollbar { width: 8px; }
+.content::-webkit-scrollbar-thumb { background: rgba(255,255,255,.14); border-radius: 4px; }
+.content::-webkit-scrollbar-track { background: transparent; }
 .loading { opacity: .5; padding: 40px; text-align: center; }
 .sec { font-size: 13px; font-weight: 600; opacity: .85; margin: 20px 0 10px; }
 .sec:first-child { margin-top: 0; }

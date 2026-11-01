@@ -25,12 +25,13 @@
       '  background: rgba(16,18,24,.55); color: #eef1f6; font-size: 15px; display: flex; align-items: center; justify-content: center;',
       '  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); opacity: .28; transition: opacity .25s ease; }',
       '.trigger:hover, .trigger.active { opacity: 1; }',
-      '.overlay { position: fixed; inset: 0; background: rgba(6,8,12,.45); pointer-events: auto; }',
+      '.overlay { position: fixed; inset: 0; background: rgba(6,8,12,.45); pointer-events: auto;',
+      '  backdrop-filter: blur(18px) saturate(.85); -webkit-backdrop-filter: blur(18px) saturate(.85); }',
       '.modal { position: fixed; left: 50%; top: 50%; transform: translate(-50%,-50%);',
       '  width: min(960px, calc(100vw - 48px)); height: min(640px, calc(100vh - 64px));',
       '  border-radius: 18px; overflow: hidden; border: 1px solid rgba(255,255,255,.16);',
-      '  box-shadow: 0 24px 80px rgba(0,0,0,.6); pointer-events: auto; background: #14161c; }',
-      '.modal iframe { width: 100%; height: 100%; border: 0; display: block; }',
+      '  box-shadow: 0 24px 80px rgba(0,0,0,.6); pointer-events: auto; background: transparent; }',
+      '.modal iframe { width: 100%; height: 100%; border: 0; display: block; background: transparent; }',
     ].join('\n');
     root.appendChild(style);
 

@@ -39,6 +39,33 @@
     if (text != null) e.textContent = text;
     return e;
   }
+  // ── 工作台玻璃磨砂(材质与聊天框同一套设置)────────────────────────────────
+  // 模态里:宿主 overlay 已把壁纸+聊天 UI 整体模糊,本页 body 用半透明玻璃染色
+  // 透出磨砂壁纸;独立访问:html 深色兜底,观感如旧。染色透明度与聊天框同映射
+  // (96-0.88*glass),但向可读性收 30% —— 工作台是控制面板,文字优先。
+  // JS 失败时 html 深色兜底仍在,模态退化为不透明(= 旧观感),无白屏风险。
+  var glassStyleEl = null;
+  function applyGlassTint() {
+    if (!state || !state.appearance) return;
+    var a = state.appearance;
+    var modal = false;
+    try { modal = window.parent && window.parent !== window; } catch (e) { modal = true; }
+    var m = /^#?([0-9a-f]{6})$/i.exec(String(a.glassColor || '#14161c'));
+    var rgb = [20, 22, 28];
+    if (m) {
+      var n = parseInt(m[1], 16);
+      rgb = [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+    }
+    var alpha = Math.max(8, Math.min(96, Math.round(96 - 0.88 * (Number(a.glass) || 50))));
+    var wb = Math.max(45, Math.min(92, Math.round(alpha * 0.75 + 28)));   // 向实心收,保控制面板可读
+    if (!glassStyleEl) {
+      glassStyleEl = document.createElement('style');
+      glassStyleEl.id = 'wb-glass';
+      document.head.appendChild(glassStyleEl);
+    }
+    glassStyleEl.textContent = 'html { background: ' + (modal ? 'transparent' : '#101216') + '; }'
+      + 'body { background: rgba(' + rgb.join(',') + ',' + (wb / 100).toFixed(2) + ') !important; }';
+  }
   // 悬停预取:提前触发服务端的 faststart 重排与元数据 Range 请求,
   // 点击播放时首帧立即可得(单槽 + 60s TTL,避免重复预热)
   var preheatSlot = null, preheatAt = 0;
@@ -66,6 +93,7 @@
   }
 
   function render() {
+    applyGlassTint();   // 玻璃染色随状态刷新(外观设置改动即时跟随)
     content.innerHTML = '';
     if (!state) { content.appendChild(el('div', 'loading', '壁纸服务器暂不可用 —— 请确认 we-wallpaper 服务器在运行')); return; }
     if (page === 'wall') renderWall();
