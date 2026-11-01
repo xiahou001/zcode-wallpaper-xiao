@@ -2,28 +2,31 @@
 <html lang="zh-CN" class="dark">
 <head>
   <meta charset="UTF-8" />
-  <title>Wallpaper Engine 工作台</title>
+  <title>壁纸引擎</title>
   <link rel="stylesheet" href="/workbench.css" />
   <script src="/workbench.js" defer></script>
 </head>
 <body>
   <div class="wb-bg" aria-hidden="true"></div>
   <div class="app">
-    <header class="head">
-      <div class="brand">
-        <div class="logo">WE</div>
-        <div class="ht">壁纸引擎<span class="count" id="wb-count"></span></div>
-      </div>
-      <a class="hlink" href="/" target="_blank" rel="noopener">播放页 ↗</a>
-    </header>
-    <nav class="tabs">
-      <button data-page="wall" class="on">壁纸库</button>
-      <button data-page="look">外观</button>
-      <button data-page="play">播放</button>
-      <button data-page="sys">系统</button>
-      <button data-page="about">关于</button>
-    </nav>
-    <main class="content" id="content"><div class="loading">加载中…</div></main>
+    <div class="wb-scroll">
+      <header class="head">
+        <div class="brand">
+          <div class="logo">WE</div>
+          <div class="ht">壁纸引擎<span class="count" id="wb-count"></span></div>
+        </div>
+        <div class="sub">本地 Wallpaper Engine 壁纸 · 液态玻璃主题</div>
+      </header>
+      <nav class="tabs">
+        <button data-page="wall" class="on">壁纸库</button>
+        <button data-page="look">外观</button>
+        <button data-page="play">播放</button>
+        <button data-page="sys">系统</button>
+        <button data-page="ext">扩展</button>
+        <button data-page="about">关于</button>
+      </nav>
+      <main class="content" id="content"><div class="loading">加载中…</div></main>
+    </div>
   </div>
 </body>
 </html>
