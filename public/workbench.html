@@ -9,19 +9,20 @@
 <body>
   <div class="wb-bg" aria-hidden="true"></div>
   <div class="app">
-    <aside class="nav">
+    <header class="head">
       <div class="brand">
         <div class="logo">WE</div>
-        <div class="bt">Wallpaper Engine<div class="bs">本地壁纸工作台 · 液态玻璃</div></div>
+        <div class="ht">壁纸引擎<span class="count" id="wb-count"></span></div>
       </div>
-      <nav>
-        <button data-page="wall" class="on">🖼 壁纸</button>
-        <button data-page="look">🎨 外观</button>
-        <button data-page="rot">🔁 轮播</button>
-        <button data-page="adv">⚙ 高级</button>
-      </nav>
-      <div class="navfoot">we-wallpaper · 127.0.0.1:7396</div>
-    </aside>
+      <a class="hlink" href="/" target="_blank" rel="noopener">播放页 ↗</a>
+    </header>
+    <nav class="tabs">
+      <button data-page="wall" class="on">壁纸库</button>
+      <button data-page="look">外观</button>
+      <button data-page="play">播放</button>
+      <button data-page="sys">系统</button>
+      <button data-page="about">关于</button>
+    </nav>
     <main class="content" id="content"><div class="loading">加载中…</div></main>
   </div>
 </body>

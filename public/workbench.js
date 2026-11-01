@@ -97,12 +97,35 @@
 
   function render() {
     applyGlassTint();   // 玻璃染色随状态刷新(外观设置改动即时跟随)
+    updateBgArt();      // 背景壁纸层(独立模式:当前壁纸预览图重度模糊)
+    var count = document.getElementById('wb-count');
+    if (count) count.textContent = wallpapers.filter(function (x) { return x.playable && !x.hidden; }).length + ' 张可用';
     content.innerHTML = '';
     if (!state) { content.appendChild(el('div', 'loading', '壁纸服务器暂不可用 —— 请确认 we-wallpaper 服务器在运行')); return; }
     if (page === 'wall') renderWall();
     else if (page === 'look') renderLook();
-    else if (page === 'rot') renderRot();
-    else renderAdv();
+    else if (page === 'play') renderPlay();
+    else if (page === 'sys') renderSystem();
+    else renderAbout();
+  }
+
+  // 背景壁纸层:独立模式把当前壁纸预览图重度模糊做底(DSH 设置窗同款观感,
+  // 零解码开销);模态透真壁纸,此层让位;无壁纸/无预览退回极光。
+  var bgArtKey = '';
+  function updateBgArt() {
+    var bg = document.querySelector('.wb-bg');
+    if (!bg) return;
+    var standalone = document.documentElement.classList.contains('standalone');
+    var w = cur();
+    var key = standalone && w && w.preview ? w.preview : '';
+    if (key === bgArtKey) return;
+    bgArtKey = key;
+    if (!key) { bg.innerHTML = ''; return; }
+    var img = document.createElement('img');
+    img.alt = '';
+    img.src = key + '?bg=' + Date.now();
+    bg.innerHTML = '';
+    bg.appendChild(img);
   }
 
   // ── 壁纸 ─────────────────────────────────────────────────
@@ -138,33 +161,6 @@
     ctl.appendChild(pause); ctl.appendChild(mute);
     content.appendChild(ctl);
 
-    content.appendChild(el('div', 'sec', '自定义壁纸(上传图片 / 视频 / 单文件网页)'));
-    var up = el('div', 'row');
-    var file = document.createElement('input');
-    file.type = 'file'; file.accept = 'video/mp4,video/webm,image/*,.html,.htm'; file.style.display = 'none';
-    var upBtn = el('button', 'btn primary', '⬆ 上传壁纸');
-    var upStat = el('span', 'muted', '支持 mp4 / webm / jpg / png / gif');
-    upBtn.onclick = function () { file.click(); };
-    file.onchange = function () {
-      var f = file.files[0];
-      if (!f) return;
-      upStat.textContent = '上传中… ' + f.name + '(' + Math.round(f.size / 1048576) + 'MB)';
-      fetch(BASE + '/api/upload?filename=' + encodeURIComponent(f.name), {
-        method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: f,
-      }).then(function (r) { return r.json(); })
-        .then(function () { upStat.textContent = '已加入列表'; return loadData(); })
-        .then(render)
-        .catch(function () { upStat.textContent = '上传失败'; });
-    };
-    up.appendChild(upBtn); up.appendChild(upStat); up.appendChild(file);
-    content.appendChild(up);
-
-    content.appendChild(el('div', 'sec', '内容分级过滤(源自 dsh-wallpaper-engine)'));
-    var cfRow = el('div', 'row');
-    var cf = el('button', 'btn' + (state.contentFilter ? ' on' : ''), state.contentFilter ? '● 已隐藏 R 级' : '○ 不过滤');
-    cf.onclick = function () { api('/api/advanced', { contentFilter: !state.contentFilter }).then(function (s) { state = s; render(); }); };
-    cfRow.appendChild(cf);
-    content.appendChild(cfRow);
     content.appendChild(el('div', 'sec', '壁纸属性(当前壁纸的可调参数)'));
     var propsBox = el('div', 'plistbox');
     propsBox.id = 'wb-props';
@@ -276,7 +272,27 @@
       content.appendChild(hRow);
       content.appendChild(el('div', 'muted', '隐藏 = 软删除:退出清单与轮播但不删文件;正在播放的那张不打断。'));
     }
-    // 自定义壁纸管理(源自上游 upload-store 的用量可见性):体积清单 + 单个删除
+    // 自定义壁纸管理(源自上游 upload-store 的用量可见性):上传 + 体积清单 + 单个删除
+    content.appendChild(el('div', 'sec', '自定义壁纸'));
+    var up = el('div', 'row');
+    var file = document.createElement('input');
+    file.type = 'file'; file.accept = 'video/mp4,video/webm,image/*,.html,.htm'; file.style.display = 'none';
+    var upBtn = el('button', 'btn primary', '⬆ 上传壁纸');
+    var upStat = el('span', 'muted', '支持 mp4 / webm / jpg / png / gif');
+    upBtn.onclick = function () { file.click(); };
+    file.onchange = function () {
+      var f = file.files[0];
+      if (!f) return;
+      upStat.textContent = '上传中… ' + f.name + '(' + Math.round(f.size / 1048576) + 'MB)';
+      fetch(BASE + '/api/upload?filename=' + encodeURIComponent(f.name), {
+        method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: f,
+      }).then(function (r) { return r.json(); })
+        .then(function () { upStat.textContent = '已加入列表'; return loadData(); })
+        .then(render)
+        .catch(function () { upStat.textContent = '上传失败'; });
+    };
+    up.appendChild(upBtn); up.appendChild(upStat); up.appendChild(file);
+    content.appendChild(up);
     var customOnes = wallpapers.filter(function (x) { return String(x.id).indexOf('custom-') === 0; });
     if (customOnes.length) {
       content.appendChild(el('div', 'sec', '自定义壁纸管理'));
@@ -693,8 +709,8 @@
       content.appendChild(presets);
     }
 
-  // ── 轮播 ─────────────────────────────────────────────────
-  function renderRot() {
+  // ── 轮播列表编辑(供「播放」页签调用)──────────────────────
+  function renderRotBody() {
     content.appendChild(el('div', 'sec', '自动轮转'));
     var row = el('div', 'row');
     var rot = el('button', 'btn' + (state.rotate.enabled ? ' on' : ''), state.rotate.enabled ? '● 轮转中' : '○ 已关闭');
@@ -819,8 +835,8 @@
     }
   }
 
-  // ── 高级 ─────────────────────────────────────────────────
-    function renderAdv() {
+  // ── 播放(切换过场 + 轮播 + 速率帧率)─────────────────────────
+    function renderPlay() {
       content.appendChild(el('div', 'sec', '切换过场(交叉淡化)'));
       var row = el('div', 'row');
       [['无', 0], ['快 600ms', 600], ['标准 1800ms', 1800], ['慢 3000ms', 3000]].forEach(function (p) {
@@ -854,7 +870,10 @@
       content.appendChild(dirRow);
       content.appendChild(el('div', 'muted', '换壁纸时按所选过场切换,当前 ' + state.transition.ms + ' ms'));
 
-      content.appendChild(el('div', 'sec', '省电(源自 dsh-wallpaper-engine)'));
+      // ── 自动轮转 + 轮播列表(原「轮播」页,DSH 布局归入「播放」)──
+      renderRotBody();
+
+      content.appendChild(el('div', 'sec', '播放速率与帧率'));
       var fpsRow = el('div', 'row');
       fpsRow.appendChild(el('label', null, '场景帧率上限'));
       [15, 30, 60].forEach(function (f) {
@@ -872,14 +891,6 @@
         vfRow.appendChild(b);
       });
       content.appendChild(vfRow);
-      var occRow = el('div', 'row');
-      occRow.appendChild(el('label', null, '遮挡暂停'));
-      [['never', '从不'], ['hidden', '切走/最小化时'], ['focus', '失焦即停']].forEach(function (p) {
-        var b = el('button', 'btn' + (state.occlusion === p[0] ? ' on' : ''), p[1]);
-        b.onclick = function () { api('/api/advanced', { occlusion: p[0] }).then(function (s) { state = s; render(); }); };
-        occRow.appendChild(b);
-      });
-      content.appendChild(occRow);
       // 视频倍速(源自 DSH playbackRate):视频壁纸专属
       var rateRow = el('div', 'row');
       rateRow.appendChild(el('label', null, '视频倍速'));
@@ -890,6 +901,20 @@
         rateRow.appendChild(b);
       });
       content.appendChild(rateRow);
+      content.appendChild(el('div', 'muted', '场景帧率改动在下次切换壁纸时生效;倍速对视频壁纸即时生效。'));
+    }
+
+  // ── 系统 ─────────────────────────────────────────────────
+    function renderSystem() {
+      content.appendChild(el('div', 'sec', '遮挡与省电'));
+      var occRow = el('div', 'row');
+      occRow.appendChild(el('label', null, '遮挡暂停'));
+      [['never', '从不'], ['hidden', '切走/最小化时'], ['focus', '失焦即停']].forEach(function (p) {
+        var b = el('button', 'btn' + (state.occlusion === p[0] ? ' on' : ''), p[1]);
+        b.onclick = function () { api('/api/advanced', { occlusion: p[0] }).then(function (s) { state = s; render(); }); };
+        occRow.appendChild(b);
+      });
+      content.appendChild(occRow);
       // 电池省电(源自 DSH pauseOnBattery):用电池且未充电时自动暂停
       var batRow = el('div', 'row');
       var bat = el('button', 'btn' + (state.batteryPause ? ' on' : ''), state.batteryPause ? '● 电池供电自动暂停已开启' : '○ 电池供电自动暂停已关闭');
@@ -897,7 +922,14 @@
       bat.onclick = function () { api('/api/advanced', { batteryPause: !state.batteryPause }).then(function (s) { state = s; render(); }); };
       batRow.appendChild(bat);
       content.appendChild(batRow);
-      content.appendChild(el('div', 'muted', '场景帧率改动在下次切换壁纸时生效;遮挡暂停对视频与场景壁纸同时生效。'));
+      content.appendChild(el('div', 'muted', '遮挡暂停对视频与场景壁纸同时生效;恢复可见/聚焦后自动继续。'));
+
+      content.appendChild(el('div', 'sec', '内容分级过滤(源自 dsh-wallpaper-engine)'));
+      var cfRow = el('div', 'row');
+      var cf = el('button', 'btn' + (state.contentFilter ? ' on' : ''), state.contentFilter ? '● 已隐藏 R 级' : '○ 不过滤');
+      cf.onclick = function () { api('/api/advanced', { contentFilter: !state.contentFilter }).then(function (s) { state = s; render(); }); };
+      cfRow.appendChild(cf);
+      content.appendChild(cfRow);
 
       // ── 场景失败记忆(源自 DSH sceneLiveFailures):坏场景直接走降级,重试入口在这 ──
       var sfRow = el('div', 'row');
@@ -1041,27 +1073,41 @@
       content.appendChild(row2);
       content.appendChild(el('div', 'muted', scanStatus
         || '删除或退订壁纸后点这里可立即同步;平时每 5 秒也会自动同步。'));
+    }
 
+  // ── 关于(健康摘要 + 链接)────────────────────────────────
+    function renderAbout() {
+      content.appendChild(el('div', 'sec', '健康摘要'));
+      var healthLine = el('div', 'muted', '正在读取体检摘要…');
+      content.appendChild(healthLine);
+      api('/api/doctor').then(function (r) {
+        healthLine.textContent = '服务器运行 ' + r.server.uptimeMin + ' 分钟 · Node ' + r.server.node
+          + ' · 注入 asar 补丁' + (r.inject.asarMarked ? '在位 ✓' : '丢失') + ' · CDP ' + ((r.inject.cdp && r.inject.cdp.attached) || []).length + ' 窗'
+          + ' · 备份槽位' + (r.backups && r.backups.slot ? '✓' : '✗') + '/全量' + (r.backups && r.backups.full ? '✓' : '✗')
+          + ' · 缓存 ' + r.cacheMB + 'MB · 磁盘余 ' + (r.diskFreeGB != null ? r.diskFreeGB + 'GB' : '?')
+          + ' · 最近异常 ' + ((r.recentIssues && r.recentIssues.length) ? r.recentIssues.length + ' 条' : '无 ✓');
+      }).catch(function () { healthLine.textContent = '体检摘要不可用:服务器不可达'; });
+      // 完整体检入口在「系统 → 注入状态」(一键体检按钮)
       content.appendChild(el('div', 'sec', '状态'));
       content.appendChild(el('div', 'muted',
         '壁纸 ' + wallpapers.length + ' 张 · 轮播列表 ' + playlists.length + ' 个 · 当前 ' +
         (cur() ? cur().title : '未启用') + ' · 服务器 127.0.0.1:7396'));
+      content.appendChild(el('div', 'sec', '打开'));
+      var openRow = el('div', 'row');
+      var playLink = document.createElement('a');
+      playLink.href = '/'; playLink.target = '_blank'; playLink.rel = 'noopener';
+      playLink.className = 'btn'; playLink.textContent = '🎞 打开播放页';
+      openRow.appendChild(playLink);
+      content.appendChild(openRow);
+      content.appendChild(el('div', 'muted', '壁纸显示在播放页或聊天窗口背景;工作台只负责控制,不显示壁纸。'));
     }
 
-  // ── 独立模式提示(非注入打开时)──
-  try {
-    if (window.parent === window) {
-      var nf = document.querySelector('.navfoot');
-      if (nf) nf.innerHTML += '<br>控制台模式:壁纸显示在 <a href="/" target="_blank" style="color:#7fd7ff">播放页</a> 或聊天窗口背景';
-    }
-  } catch {}
-
-  // ── 导航 ─────────────────────────────────────────────────
-  document.querySelectorAll('.nav nav button').forEach(function (b) {
+  // ── 导航(顶栏横向标签,DSH 设置窗布局)─────────────────────────
+  document.querySelectorAll('.tabs button').forEach(function (b) {
     b.onclick = function () {
       page = b.dataset.page;
       editorName = editorIds = null;
-      document.querySelectorAll('.nav nav button').forEach(function (x) { x.classList.toggle('on', x === b); });
+      document.querySelectorAll('.tabs button').forEach(function (x) { x.classList.toggle('on', x === b); });
       render();
     };
   });
