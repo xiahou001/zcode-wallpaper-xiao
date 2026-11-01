@@ -1,10 +1,7 @@
 /* workbench — DSH 式壁纸工作台(独立页/模态两用)
-   玻璃磨砂材质(与聊天框同一套材质语言):
-   · 模态:宿主 overlay 已把壁纸+聊天 UI 整体模糊,本页 body 半透明染色透出磨砂壁纸;
-   · 独立:html 深色底 + .wb-bg 极光渐变艺术层,面板 backdrop-filter 真实取糊它;
-   · 面板材质 = 半透明面 + blur+饱和 + 1px 高光描边 + 顶部釉光渐变(液态玻璃签名)。
-   染色色相由 workbench.js 按外观设置的玻璃颜色注入(--wb-glass-rgb);JS 失败时
-   html 深色兜底,全部规则退化 = 旧观感,无白屏风险。 */
+   玻璃磨砂材质(渲染器免疫版):服务端把当前壁纸预览图烘焙成 96px 宽模糊小图
+   (--wb-bgart),本页纯 background-image 双层 + 半透明面板染色 —— 无 filter/
+   backdrop-filter/blend 依赖,任何渲染器(含冻结/软件回退面)都画不出黑帧。 */
 * { box-sizing: border-box; margin: 0; font-family: "Segoe UI", system-ui, sans-serif; }
 /* 原生控件(下拉/滚动条/勾选框)统一深色,避免白底下拉和暗色玻璃冲突 */
 :root { color-scheme: dark; }
@@ -14,32 +11,26 @@ body { background: transparent; color: #eef1f6; font-size: 13px; }
 select, option { background-color: #1a1c22; color: #eef1f6; }
 option:checked { background-color: #2a3242; color: #ffffff; }
 
-/* 极光底(仅独立模式显示;模态里真壁纸就是艺术层,这个必须让位)。
-   ⚠ 结构:.wb-bg 的元素背景只留深色基底线;壁纸 img 在其上;
-   ::after 彩色氛围叠加盖在 img 上 —— 暗色壁纸也保证有可见的色彩与对比度
-   (img 会盖住元素背景,彩色氛围不能只放背景里,实测黑屏教训)。 */
-.wb-bg { display: none; }
+/* 背景壁纸层(DSH 设置窗同款观感)—— 渲染器免疫版:
+   服务端把预览图烘焙成 96px 宽的模糊小图(--wb-bgart,数学模糊),本页只用
+   普通 background-image 双层(深色渐变保对比 + 彩色氛围),没有任何 filter/
+   backdrop-filter/blend 依赖 —— 内嵌浏览器渲染面冻结/软件回退时滤镜栈会输出
+   黑帧(实测),纯背景图任何渲染器都画得出来。无壁纸时退回极光渐变。 */
+.wb-bg {
+  display: none;
+}
 .standalone .wb-bg {
   display: block; position: fixed; inset: 0; z-index: 0; pointer-events: none;
-  background: linear-gradient(180deg, #0d1017, #0b0d11);
-}
-.standalone .wb-bg::after {
-  content: ''; position: absolute; inset: 0;
-  /* 氛围光用 screen 混合:往暗壁纸上"加光"而非"盖色" —— 亮壁纸显壁纸色,
-     暗壁纸也有明确的彩色光感(DSH 液态玻璃的发光叠层语言),任何壁纸下不黑屏 */
-  background:
-    radial-gradient(56% 48% at 14% 10%, rgba(255, 158, 207, .55), transparent 70%),
-    radial-gradient(52% 46% at 88% 8%, rgba(56, 132, 255, .48), transparent 72%),
-    radial-gradient(44% 42% at 6% 88%, rgba(94, 224, 197, .28), transparent 72%),
-    linear-gradient(180deg, rgba(13, 16, 23, .26), rgba(11, 13, 17, .40));
-  mix-blend-mode: screen;
-}
-/* 背景壁纸层(DSH 设置窗同款观感):当前壁纸预览图放大+重度模糊,
-   让独立模式的玻璃面板真正取糊壁纸色彩;无壁纸时退回极光。 */
-.wb-bg img {
-  position: absolute; inset: -64px; width: calc(100% + 128px); height: calc(100% + 128px);
-  object-fit: cover;
-  filter: blur(44px) brightness(.85) saturate(1.4);
+  background-image:
+    radial-gradient(56% 48% at 14% 10%, rgba(255, 158, 207, .34), transparent 70%),
+    radial-gradient(52% 46% at 88% 8%, rgba(56, 132, 255, .30), transparent 72%),
+    radial-gradient(44% 42% at 6% 88%, rgba(94, 224, 197, .18), transparent 72%),
+    linear-gradient(180deg, rgba(13, 16, 23, .30), rgba(11, 13, 17, .46)),
+    var(--wb-bgart, none);
+  background-size: cover, cover, cover, cover, cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-color: #0b0d11;
 }
 
 .app { position: relative; z-index: 1; display: flex; flex-direction: column; width: 100%; height: 100%; }
@@ -68,8 +59,6 @@ option:checked { background-color: #2a3242; color: #ffffff; }
   background:
     linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.015) 55%),
     rgba(var(--wb-glass-rgb, 20, 22, 28), .34);
-  backdrop-filter: blur(22px) saturate(1.2);
-  -webkit-backdrop-filter: blur(22px) saturate(1.2);
   border: 1px solid rgba(255,255,255,.09); border-radius: 12px;
   box-shadow: inset 0 1px 0 rgba(255,255,255,.06);
   overflow: hidden;
@@ -96,13 +85,12 @@ option:checked { background-color: #2a3242; color: #ffffff; }
 .sec { font-size: 13px; font-weight: 600; opacity: .9; margin: 22px 0 10px; padding-top: 16px; border-top: 1px solid rgba(255,255,255,.07); }
 .sec:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
 
-/* 玻璃面板公共材质(hero/属性盒) */
+/* 玻璃面板公共材质(hero/属性盒)—— 渲染器免疫版:半透明染色 + 釉光 +
+   高光描边,不依赖 backdrop-filter(背景已由服务端预模糊,面板只需染色) */
 .hero, .plistbox {
   background:
     linear-gradient(180deg, rgba(255,255,255,.055), rgba(255,255,255,.015) 42%),
     rgba(var(--wb-glass-rgb, 20, 22, 28), .38);
-  backdrop-filter: blur(22px) saturate(1.25);
-  -webkit-backdrop-filter: blur(22px) saturate(1.25);
   border: 1px solid rgba(255,255,255,.10);
   box-shadow: inset 0 1px 0 rgba(255,255,255,.07), 0 12px 34px rgba(0,0,0,.30);
 }

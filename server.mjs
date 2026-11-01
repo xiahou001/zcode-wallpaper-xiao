@@ -779,6 +779,41 @@ function diagRecord(kind, payload) {
 }
 function sceneProgressSnapshot(token) { return sceneProgress.get(token) || { ok: false, token, served: 0, active: 0 }; }
 
+// ── 控制台背景预模糊(96px 宽):缩到极小再放大 = 数学模糊,零 CSS 滤镜依赖 ──
+// 内嵌浏览器渲染面冻结/软件回退时,大图 blur + backdrop-filter + blend 的滤镜栈
+// 会输出黑帧(实测);烘焙成普通 JPEG 后任何渲染器都画得出来。按 mtime 缓存。
+const bgBlurJobs = new Map();
+function bgBlurVariant(previewAbs, id) {
+  try {
+    const st = fs.statSync(previewAbs);
+    const dir = path.join(APP_DIR, 'cache', 'bgblur');
+    const out = path.join(dir, safeId(id) + '-' + fp8(previewAbs + '|' + st.size + '|' + Math.floor(st.mtimeMs)) + '.jpg');
+    if (fs.existsSync(out) && fs.statSync(out).size > 512) return Promise.resolve(out);
+    if (!detectFfmpeg()) { diagRecord('bgblur-noffmpeg', { id }); return Promise.resolve(null); }
+    if (bgBlurJobs.has(out)) return bgBlurJobs.get(out);
+    const job = new Promise((resolve) => {
+      fs.mkdirSync(dir, { recursive: true });
+      const tmp = out + '.tmp';
+      execFile(ffmpegPath, ['-y', '-i', previewAbs, '-vf', 'scale=96:-2,boxblur=2:1,eq=brightness=-0.04:saturation=1.25',
+        '-q:v', '5', '-frames:v', '1', '-f', 'mjpeg', tmp], { timeout: 30000 }, (err) => {
+        bgBlurJobs.delete(out);
+        try {
+          if (err || !fs.existsSync(tmp) || fs.statSync(tmp).size < 512) {
+            diagRecord('bgblur-fail', { id, error: String(err && err.message || err).slice(0, 160) });
+            try { fs.rmSync(tmp, { force: true }); } catch {}
+            return resolve(null);
+          }
+          fs.renameSync(tmp, out);
+          diagRecord('bgblur-ok', { id });
+          resolve(out);
+        } catch (e2) { diagRecord('bgblur-fail', { id, error: String(e2 && e2.message || e2).slice(0, 160) }); resolve(null); }
+      });
+    });
+    bgBlurJobs.set(out, job);
+    return job;
+  } catch (e3) { diagRecord('bgblur-fail', { id, error: String(e3 && e3.message || e3).slice(0, 160) }); return Promise.resolve(null); }
+}
+
 function sendJSON(res, code, obj) {
   const body = JSON.stringify(obj);
   res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
@@ -1915,6 +1950,36 @@ ${(a.fontFamilyComposer || a.fontSizeComposer || a.fontWeightComposer) ? `
         'Cache-Control': 'no-store',
       });
       return res.end('"ok"');
+    }
+
+    // ---- 工作台(注入背景壁纸变量:控制台玻璃背景服务端烘焙,零客户端滤镜依赖)----
+    if (p === '/workbench') {
+      let html = fs.readFileSync(path.join(PUBLIC_DIR, 'workbench.html'), 'utf8');
+      // 当前壁纸的预模糊背景:缩到 96px 宽再回链 = 天然模糊(数学模糊,不依赖任何
+      // CSS filter/blend —— 内嵌浏览器渲染面冻结/软件回退时滤镜栈会输出黑帧,实测)。
+      // 无壁纸/生成中 → 空变量,CSS 极光兜底。
+      let bgart = '';
+      const wcur = inventory.find((x) => x.id === state.currentId);
+      if (wcur && wcur.previewAbs) {
+        try {
+          const blurred = await bgBlurVariant(wcur.previewAbs, wcur.id);
+          if (blurred) bgart = "/preview-blur/" + wcur.id + "?v=" + Math.floor(fs.statSync(blurred).mtimeMs);
+          else bgart = "/preview/" + wcur.id + "?v=" + Date.now();
+        } catch { bgart = "/preview/" + wcur.id + "?v=" + Date.now(); }
+      }
+      html = html.replace('<html lang="zh-CN" class="dark">', '<html lang="zh-CN" class="dark" style="--wb-bgart:' + (bgart ? "url('" + bgart + "')" : 'none') + '">');
+      if (!html.includes('--wb-bgart')) html = html.replace('<body>', '<body style="--wb-bgart:' + (bgart ? "url('" + bgart + "')" : 'none') + '">');
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+      return res.end(html);
+    }
+    // 预模糊背景图(缓存于 cache/bgblur,按预览图 mtime 失效);ffmpeg 缺失回 null
+    if (p.startsWith('/preview-blur/') && (method === 'GET' || method === 'HEAD')) {
+      const id = p.slice('/preview-blur/'.length).split('?')[0];
+      const w = inventory.find((x) => x.id === id);
+      if (!w || !w.previewAbs) { res.statusCode = 404; return res.end('no preview'); }
+      const out = await bgBlurVariant(w.previewAbs, id);
+      if (!out) { res.statusCode = 404; return res.end('blur unavailable'); }
+      return serveFile(out, req, res, { cache: 'public, max-age=3600' });
     }
 
     if (p === '/embed-test') {

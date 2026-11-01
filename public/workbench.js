@@ -109,23 +109,16 @@
     else renderAbout();
   }
 
-  // 背景壁纸层:独立模式把当前壁纸预览图重度模糊做底(DSH 设置窗同款观感,
-  // 零解码开销);模态透真壁纸,此层让位;无壁纸/无预览退回极光。
+  // 背景壁纸层:换壁纸时同步 --wb-bgart 变量(服务端已按当前壁纸烘焙好预模糊图,
+  // 首屏由 /workbench 直接注入,这里只负责后续变化);css 端是纯 background-image。
   var bgArtKey = '';
   function updateBgArt() {
-    var bg = document.querySelector('.wb-bg');
-    if (!bg) return;
-    var standalone = document.documentElement.classList.contains('standalone');
     var w = cur();
-    var key = standalone && w && w.preview ? w.preview : '';
+    var key = w && w.preview ? w.preview : '';
     if (key === bgArtKey) return;
     bgArtKey = key;
-    if (!key) { bg.innerHTML = ''; return; }
-    var img = document.createElement('img');
-    img.alt = '';
-    img.src = key + '?bg=' + Date.now();
-    bg.innerHTML = '';
-    bg.appendChild(img);
+    var v = key ? "/preview-blur/" + w.id + "?v=" + Date.now() : 'none';
+    document.documentElement.style.setProperty('--wb-bgart', key ? "url('" + v + "')" : 'none');
   }
 
   // ── 壁纸 ─────────────────────────────────────────────────
