@@ -1071,6 +1071,24 @@
   });
 
   loadData(true).then(render).catch(function () { render(); });
+  // ── 版本自刷新:工作台长期开着会错过服务器端的代码/样式更新(已加载页面
+  // 不会自动刷新,no-store 只管网络请求)。与播放层同机制:记住启动时的
+  // /api/version 指纹,变了且安全时才 location.reload() —— 窗口隐藏,或无
+  // 焦点控件(正在打字/调滑杆时绝不打断);不安全就推迟到下一轮再试。
+  var wbVersion = null;
+  setInterval(function () {
+    fetch(BASE + '/api/version?wb=' + Date.now(), { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(function (v) {
+        if (wbVersion === null) { wbVersion = v.v; return; }
+        if (v.v === wbVersion) return;
+        var ae = null;
+        try { ae = document.activeElement; } catch (e) {}
+        var busy = ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.tagName === 'SELECT');
+        if (document.hidden || !busy) { wbVersion = v.v; location.reload(); }
+        // 忙:不改基线,下一轮(10s)再试,直到出现安全时机
+      }).catch(function () {});
+  }, 10000);
   // 状态轮询(打开期间保持同步)
   setInterval(function () {
     api('/api/state').then(function (s) {
@@ -1093,3 +1111,5 @@
   }, 5000);
   function panelDirty() { return editorName != null; }
 })();
+
+// version-bump probe
