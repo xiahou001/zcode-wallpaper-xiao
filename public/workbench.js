@@ -728,7 +728,7 @@
       content.appendChild(nameRow);
       var box = el('div', 'plistbox');
       wallpapers.forEach(function (w) {
-        if (!w.playable) return;
+        if (!w.playable || w.hidden) return;   // 隐藏的壁纸不进轮播编辑器(软删除语义)
         var c = el('label', 'chk');
         var cb = document.createElement('input');
         cb.type = 'checkbox';
@@ -772,7 +772,7 @@
       var save = el('button', 'btn primary', '保存列表');
       save.onclick = function () {
         var nm = nameIn.value.trim() || editorName;
-        api('/api/playlists', { name: nm, ids: editorIds || wallpapers.filter(function (x) { return x.playable; }).map(function (x) { return x.id; }) })
+        api('/api/playlists', { name: nm, ids: editorIds || wallpapers.filter(function (x) { return x.playable && !x.hidden; }).map(function (x) { return x.id; }) })
           .then(function (s) { state = s; return loadData(); })
           .then(function () { editorName = editorIds = null; render(); });
       };

@@ -136,8 +136,43 @@
     // 就绪判定 = __wp 存在且 __wpStats 报告 fps>0(只查存在会漏掉"加载了但渲染不出")
     const budgetMs = 12000 + Math.min(90000, Math.round((w.sizeBytes || 0) / 1e6) * 400);   // 大包按大小放宽:235MB ≈ 106s
     let startAt = Date.now();
+    // 运行期心跳(源自上游 live-layer-watch):首帧成功后看护不收工,转监控模式 ——
+    // 期望播放却连续 LIVE_STALL_TICKS 拍无帧 → 先单次 resume 自救 → 仍无帧判失败
+    // (进 wallpaperFailed 降级链 + 失败记忆)。暂停/遮挡/隐藏期间不计拍(无帧有正当
+    // 理由就不算失败,与上游同一条纪律)。修的是:WebGL 中途失联后黑屏到手动切换为止。
+    const LIVE_STALL_TICKS = 12, LIVE_RESUME_AT = 3;
+    let watchMode = 'first';     // first=首帧看护 | runtime=运行期心跳
+    let stallTicks = 0, resumed = false;
+    const expectPlaying = function () {
+      // 与 applyPaused 同口径的有效暂停判定:任一成立就不期望出帧
+      if (state.paused || document.hidden) return false;
+      if (state.occlusion === 'focus' && !document.hasFocus()) return false;
+      if (state.batteryPause && battery && battery.charging === false) return false;
+      return true;
+    };
+    const runtimeTick = function () {
+      if (layer !== iframe || mountedId !== w.id) { clearInterval(sceneWatchdog); return; }
+      if (!expectPlaying()) { stallTicks = 0; return; }
+      let fr = null;
+      try {
+        const st = iframe.contentWindow && iframe.contentWindow.__wpStats;
+        fr = st && typeof st.frame === 'function' ? st.frame() : null;
+      } catch (e6) { fr = null; }   // 渲染页失联(导航/崩溃):按无帧计
+      if (fr && fr.running && fr.fps > 0) { stallTicks = 0; return; }
+      stallTicks += 1;
+      if (stallTicks === LIVE_RESUME_AT && !resumed) {
+        resumed = true;   // 单次自救:渲染器偶发停摆时恢复一拍
+        try { const wp2 = iframe.contentWindow && iframe.contentWindow.__wp; if (wp2 && wp2.resume) wp2.resume(); } catch (e7) {}
+        return;
+      }
+      if (stallTicks >= LIVE_STALL_TICKS) {
+        clearInterval(sceneWatchdog);
+        wallpaperFailed(w, 'scene-stalled');
+      }
+    };
     sceneWatchdog = setInterval(() => {
       if (layer !== iframe || mountedId !== w.id) { clearInterval(sceneWatchdog); return; }
+      if (watchMode === 'runtime') return runtimeTick();
       if (document.hidden) { startAt = Date.now(); return; }   // 遮挡暂停期间不计入预算
       api('/api/scene-progress?token=' + encodeURIComponent(w.sceneBase || ''))   // 带超时:挂起的探询不再拖住看护节拍
         .then(function (p) {
@@ -167,7 +202,7 @@
           }
         }
         if (win && win.__wp && frame && frame.running && frame.fps > 0) {
-          clearInterval(sceneWatchdog);
+          watchMode = 'runtime'; stallTicks = 0; resumed = false;   // 首帧达成 → 转运行期心跳(不再收工)
           recoveryAttempts = 0;
           try { $('hud-title').textContent = w.title; } catch (e5) {}   // 起播:去掉「加载中」后缀
           const cb = onLayerReady; onLayerReady = null;
