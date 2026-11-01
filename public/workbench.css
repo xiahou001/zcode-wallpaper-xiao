@@ -25,18 +25,21 @@ option:checked { background-color: #2a3242; color: #ffffff; }
 }
 .standalone .wb-bg::after {
   content: ''; position: absolute; inset: 0;
+  /* 氛围光用 screen 混合:往暗壁纸上"加光"而非"盖色" —— 亮壁纸显壁纸色,
+     暗壁纸也有明确的彩色光感(DSH 液态玻璃的发光叠层语言),任何壁纸下不黑屏 */
   background:
-    radial-gradient(56% 48% at 14% 10%, rgba(255, 158, 207, .20), transparent 70%),
-    radial-gradient(52% 46% at 88% 8%, rgba(56, 132, 255, .18), transparent 72%),
-    radial-gradient(44% 42% at 6% 88%, rgba(94, 224, 197, .11), transparent 72%),
-    linear-gradient(180deg, rgba(13, 16, 23, .40), rgba(11, 13, 17, .52));
+    radial-gradient(56% 48% at 14% 10%, rgba(255, 158, 207, .55), transparent 70%),
+    radial-gradient(52% 46% at 88% 8%, rgba(56, 132, 255, .48), transparent 72%),
+    radial-gradient(44% 42% at 6% 88%, rgba(94, 224, 197, .28), transparent 72%),
+    linear-gradient(180deg, rgba(13, 16, 23, .26), rgba(11, 13, 17, .40));
+  mix-blend-mode: screen;
 }
 /* 背景壁纸层(DSH 设置窗同款观感):当前壁纸预览图放大+重度模糊,
    让独立模式的玻璃面板真正取糊壁纸色彩;无壁纸时退回极光。 */
 .wb-bg img {
   position: absolute; inset: -64px; width: calc(100% + 128px); height: calc(100% + 128px);
   object-fit: cover;
-  filter: blur(48px) brightness(.68) saturate(1.35);
+  filter: blur(44px) brightness(.85) saturate(1.4);
 }
 
 .app { position: relative; z-index: 1; display: flex; flex-direction: column; width: 100%; height: 100%; }
