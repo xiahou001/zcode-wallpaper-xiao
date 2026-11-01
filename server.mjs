@@ -1102,6 +1102,22 @@ function injectStatus() {
 }
 setTimeout(() => injectStatus(), 15000).unref?.();   // 登录高峰(前 15s)过后再暖缓存
 
+// ── 双轨全灭检测:ZCode 在跑、asar 补丁丢失且被 fuse 拦下、CDP 轨道空挂
+// = 壁纸此刻到不了聊天窗口。不自动重启用户正在用的 ZCode(太激进),记醒目
+// 诊断(进 doctor 的最近异常)并在状态翻转时记录恢复,控制台健康摘要可见。
+let injectDeadState = false;
+setInterval(function () {
+  try {
+    if (!zcodeRunning()) { if (injectDeadState) { injectDeadState = false; diagRecord('inject-recovered', { why: 'zcode-exit' }); } return; }
+    const inj = injectStatus();
+    if (!inj) return;
+    const cdpCount = (inj.cdp && inj.cdp.attached && inj.cdp.attached.length) || 0;
+    const dead = inj.asarMarked === false && inj.fuseIntegrity === true && cdpCount === 0;
+    if (dead && !injectDeadState) { injectDeadState = true; diagRecord('inject-dead', { hint: '双轨均未生效,壁纸未送达聊天窗口' }); }
+    else if (!dead && injectDeadState) { injectDeadState = false; diagRecord('inject-recovered', { why: 'track-alive', cdp: cdpCount }); }
+  } catch (e) {}
+}, 5 * 60_000).unref();
+
 const server = http.createServer(async (req, res) => {
   const u = new URL(req.url || '/', 'http://x');
   const p = decodeURIComponent(u.pathname);
@@ -1484,7 +1500,7 @@ const server = http.createServer(async (req, res) => {
       report.cacheMB = Math.round(cacheBytes / 1e6);
       try { const sfs = fs.statfsSync(APP_DIR); report.diskFreeGB = Math.round((sfs.bavail * sfs.bsize) / 1e9); } catch (e) { report.diskFreeGB = null; }
       try { JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); report.stateOk = true; } catch (e) { report.stateOk = false; }
-      report.recentIssues = diagEntries.filter((e) => /error|fail|corrupt|rejection|exception|watchdog-|fence/i.test(String(e.kind))).slice(-6);
+      report.recentIssues = diagEntries.filter((e) => /error|fail|corrupt|rejection|exception|watchdog-|fence|inject-dead/i.test(String(e.kind))).slice(-6);
       return sendJSON(res, 200, report);
     }
 

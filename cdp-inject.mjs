@@ -149,9 +149,9 @@ export function startCdpInjector(opts = {}) {
     if (!t.webSocketDebuggerUrl) return;
     let ws;
     try { ws = await new Ws(t.webSocketDebuggerUrl).connect(); } catch (e) { log('cdp-connect-fail ' + e.message); return; }
-    const info = { ws, url: String(t.url || '').slice(0, 70), verified: null };
+    const info = { ws, url: String(t.url || '').slice(0, 70), verified: null, retries: 0 };
     targets.set(t.id, info);
-    ws.onClose = () => { targets.delete(t.id); };
+    ws.onClose = () => { if (targets.get(t.id) === info) targets.delete(t.id); };   // 身份守卫:重试换新连接时,旧连接的 close 不得误删新登记
     ws.onMessage = (txt) => {
       let m;
       try { m = JSON.parse(txt); } catch (e) { return; }
@@ -192,7 +192,19 @@ export function startCdpInjector(opts = {}) {
     for (const t of list || []) {
       if (!t || t.type !== 'page' || !t.webSocketDebuggerUrl) continue;
       seen.add(t.id);
-      if (targets.has(t.id)) continue;
+      const existing = targets.get(t.id);
+      if (existing) {
+        // 验证失败重试:注入执行了但幂等闸没立起来(页面恰在导航/评估时机不对)
+        // → 该窗口会一直没壁纸。每个目标最多重试 3 次,防注入缺陷时无限循环。
+        if (existing.verified === false && (existing.retries || 0) < 3) {
+          existing.retries = (existing.retries || 0) + 1;
+          log('cdp-retry ' + (existing.retries) + '/3 ' + existing.url);
+          targets.delete(t.id);
+          existing.ws.close();
+          attach(t);
+        }
+        continue;
+      }
       if (!urlMatch(t)) continue;
       attach(t);
     }

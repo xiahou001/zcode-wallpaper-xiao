@@ -17,6 +17,38 @@ const BACKUP_DIR = path.join(require('os').homedir(), '.we-wallpaper', 'asar-bac
 
 const fd = fs.openSync(ASAR, 'r');
 
+// ── 跨进程互斥锁:resync-injection(VBS 周期)与 watchdog(apply.cmd)都走本脚本,
+// 并发写 asar = 各自过 stability gate 后互相覆写(最坏半个补丁)。锁文件放 PID+时间戳,
+// 持有超过 90s 视为持有者已死,允许抢占。锁在 process exit 时清理(含 crash 的
+// uncaughtException 路径拿不到——靠 staleness 抢占兜底)。
+const LOCK_FILE = path.join(BACKUP_DIR, 'patch.lock');
+function acquirePatchLock() {
+  try {
+    fs.mkdirSync(BACKUP_DIR, { recursive: true });
+    if (fs.existsSync(LOCK_FILE)) {
+      try {
+        const lock = JSON.parse(fs.readFileSync(LOCK_FILE, 'utf8'));
+        const age = Date.now() - Number(lock.at || 0);
+        // 持有者还活着 → 拒绝;持有者死了/超时/是本进程的残留(pid 复用) → 抢占
+        let holderAlive = false;
+        const lockPid = Number(lock.pid || 0);
+        if (lockPid > 0 && lockPid !== process.pid) {
+          try { process.kill(lockPid, 0); holderAlive = true; } catch (e) { holderAlive = false; }
+        }
+        if (holderAlive && age < 90 * 1000) {
+          console.log('PATCH LOCK: 另一补丁进程(pid=' + lock.pid + ')正在工作,本轮退出');
+          process.exit(0);
+        }
+        console.log('PATCH LOCK: 旧锁超时(' + Math.round(age / 1000) + 's, pid=' + lock.pid + '),抢占');
+      } catch (e) { console.log('PATCH LOCK: 锁文件损坏,覆盖'); }
+    }
+    fs.writeFileSync(LOCK_FILE, JSON.stringify({ pid: process.pid, at: Date.now() }));
+    return true;
+  } catch (e) { console.log('PATCH LOCK: ' + e.message + '(锁失败不阻塞补丁,单机风险可控)'); return true; }
+}
+const gotLock = acquirePatchLock();
+process.on('exit', function () { if (gotLock) { try { fs.rmSync(LOCK_FILE, { force: true }); } catch (e) {} } });
+
 // ── fuse 安全闸:ZCode.exe 若开启 asar 完整性校验,改写 asar 会让客户端拒绝启动 ──
 // 读 Electron fuse 线(哨兵串后的字节;老格式 0/1/2,新格式 ASCII '0'/'1'/' ')。
 // 只认「明确开启」;读不出/不含哨兵(老 Electron)一律放行。
