@@ -22,10 +22,10 @@ option:checked { background-color: #2a3242; color: #ffffff; }
 .standalone .wb-bg {
   display: block; position: fixed; inset: 0; z-index: 0; pointer-events: none;
   background-image:
-    radial-gradient(56% 48% at 14% 10%, rgba(255, 158, 207, .34), transparent 70%),
-    radial-gradient(52% 46% at 88% 8%, rgba(56, 132, 255, .30), transparent 72%),
-    radial-gradient(44% 42% at 6% 88%, rgba(94, 224, 197, .18), transparent 72%),
-    linear-gradient(180deg, rgba(13, 16, 23, .30), rgba(11, 13, 17, .46)),
+    radial-gradient(56% 48% at 14% 10%, rgba(255, 158, 207, .44), transparent 70%),
+    radial-gradient(52% 46% at 88% 8%, rgba(56, 132, 255, .38), transparent 72%),
+    radial-gradient(44% 42% at 6% 88%, rgba(94, 224, 197, .24), transparent 72%),
+    linear-gradient(180deg, rgba(13, 16, 23, .26), rgba(11, 13, 17, .42)),
     var(--wb-bgart, none);
   background-size: cover, cover, cover, cover, cover;
   background-position: center;
