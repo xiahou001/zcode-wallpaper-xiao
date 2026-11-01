@@ -2023,6 +2023,10 @@ ${(a.fontFamilyComposer || a.fontSizeComposer || a.fontWeightComposer) ? `
     if (p === '/web-shim.js') {
       return serveFile(path.join(VENDOR_DIR, 'web-shim.js'), req, res, { cache: 'no-store' });
     }
+    // 网页壁纸夺焦围栏(源自上游 lib/we-focus-guard.js):帧级+元素级,防程序化抢宿主焦点
+    if (p === '/web-focus-guard.js') {
+      return serveFile(path.join(PUBLIC_DIR, 'web-focus-guard.js'), req, res, { cache: 'no-store' });
+    }
     if (p.startsWith('/web-live/')) {
       const rest = p.slice('/web-live/'.length);   // <id>/<file...>
       const slash = rest.indexOf('/');
@@ -2036,12 +2040,18 @@ ${(a.fontFamilyComposer || a.fontSizeComposer || a.fontWeightComposer) ? `
       if (abs && fs.statSync(abs).isDirectory()) abs = fenced(w.dir, target + '/' + path.basename(w.fileAbs));
       if (!abs || !fs.existsSync(abs) || fs.statSync(abs).isDirectory()) { res.statusCode = 404; return res.end('not found'); }
       if (/\.(html?|htm)$/i.test(abs)) {
-        // 注入 shim 作为首个脚本(必须在作者脚本前注册 WE API)
+        // 注入 shim(WE API 兼容层)与夺焦围栏(防网页壁纸程序化抢宿主焦点)——
+        // 都必须在作者脚本前注册;文档已含其一则跳过那份
         let html = fs.readFileSync(abs, 'utf8');
         const shimTag = '<script src="/web-shim.js"></script>';
+        const guardTag = '<script src="/web-focus-guard.js"></script>';
         if (!html.includes('/web-shim.js')) {
           if (/<head[^>]*>/i.test(html)) html = html.replace(/<head[^>]*>/i, (m) => m + shimTag);
           else html = shimTag + html;
+        }
+        if (!html.includes('/web-focus-guard.js')) {
+          if (/<head[^>]*>/i.test(html)) html = html.replace(/<head[^>]*>/i, (m) => m + guardTag);
+          else html = guardTag + html;
         }
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
         return res.end(html);
