@@ -1121,20 +1121,37 @@
   // 不会自动刷新,no-store 只管网络请求)。与播放层同机制:记住启动时的
   // /api/version 指纹,变了且安全时才 location.reload() —— 窗口隐藏,或无
   // 焦点控件(正在打字/调滑杆时绝不打断);不安全就推迟到下一轮再试。
+  // ⚠ 双通道:内嵌浏览器环境实测会把可见页面的定时器整体冻结(轮询 14 分钟
+  // 无一请求)—— setInterval 只是主通道;输入事件(动鼠标/聚焦/可见性变化)
+  // 能解除冻结,因此另挂一条惰性检查通道,两条任意一条活着即可保同步。
   var wbVersion = null;
-  setInterval(function () {
+  var wbCheckBusy = false;
+  var wbLastCheck = 0;
+  function wbCheckVersion() {
+    if (wbVersion === null || wbCheckBusy) return;
+    if (Date.now() - wbLastCheck < 2500) return;   // 惰性通道节流:指针风暴不放大请求
+    wbCheckBusy = true;
+    wbLastCheck = Date.now();
     fetch(BASE + '/api/version?wb=' + Date.now(), { cache: 'no-store' })
       .then(function (r) { return r.json(); })
       .then(function (v) {
+        wbCheckBusy = false;
         if (wbVersion === null) { wbVersion = v.v; return; }
         if (v.v === wbVersion) return;
         var ae = null;
         try { ae = document.activeElement; } catch (e) {}
         var busy = ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.tagName === 'SELECT');
         if (document.hidden || !busy) { wbVersion = v.v; location.reload(); }
-        // 忙:不改基线,下一轮(10s)再试,直到出现安全时机
-      }).catch(function () {});
-  }, 10000);
+        // 忙:不改基线,下一轮再试,直到出现安全时机
+      }).catch(function () { wbCheckBusy = false; });
+  }
+  (function () {
+    var iv = setInterval(wbCheckVersion, 10000);   // 主通道(正常环境)
+    if (iv.unref) iv.unref();
+  })();
+  ['pointermove', 'pointerdown', 'visibilitychange', 'focus', 'pageshow'].forEach(function (ev) {
+    window.addEventListener(ev, wbCheckVersion, { passive: true });
+  });
   // 状态轮询(打开期间保持同步)
   setInterval(function () {
     api('/api/state').then(function (s) {

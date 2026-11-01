@@ -1122,7 +1122,9 @@ const server = http.createServer(async (req, res) => {
     // 壁纸就整页 location.reload(),既是性能灾难也让动画/播放在调节期间不断重启。
     if (p === '/api/version') {
       let h = 0;
-      for (const rel of ['public/player.js', 'public/embed.js', 'public/embed.css', 'public/workbench.js']) {
+      // 指纹必须覆盖全部会被工作台自刷新依赖的前端资产 —— 曾漏掉 workbench.css/html,
+      // 纯样式改动永远不触发工作台自刷新(用户实测『背景还是黑的』的根因之一)。
+      for (const rel of ['public/player.js', 'public/embed.js', 'public/embed.css', 'public/workbench.js', 'public/workbench.css', 'public/workbench.html']) {
         try { const st2 = fs.statSync(path.join(__dirname, rel)); h = (h * 31 + st2.size + (st2.mtimeMs % 100000)) >>> 0; } catch (e3) {}
       }
       return sendJSON(res, 200, { v: String(h) });

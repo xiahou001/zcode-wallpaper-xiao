@@ -14,23 +14,29 @@ body { background: transparent; color: #eef1f6; font-size: 13px; }
 select, option { background-color: #1a1c22; color: #eef1f6; }
 option:checked { background-color: #2a3242; color: #ffffff; }
 
-/* 极光底(仅独立模式显示;模态里真壁纸就是艺术层,这个必须让位) */
+/* 极光底(仅独立模式显示;模态里真壁纸就是艺术层,这个必须让位)。
+   ⚠ 结构:.wb-bg 的元素背景只留深色基底线;壁纸 img 在其上;
+   ::after 彩色氛围叠加盖在 img 上 —— 暗色壁纸也保证有可见的色彩与对比度
+   (img 会盖住元素背景,彩色氛围不能只放背景里,实测黑屏教训)。 */
 .wb-bg { display: none; }
 .standalone .wb-bg {
   display: block; position: fixed; inset: 0; z-index: 0; pointer-events: none;
-  background:
-    radial-gradient(56% 48% at 14% 10%, rgba(255, 158, 207, .21), transparent 70%),
-    radial-gradient(52% 46% at 88% 8%, rgba(56, 132, 255, .18), transparent 72%),
-    radial-gradient(60% 54% at 74% 94%, rgba(var(--wb-glass-rgb, 20, 22, 28), .58), transparent 74%),
-    radial-gradient(44% 42% at 6% 88%, rgba(94, 224, 197, .11), transparent 72%),
-    linear-gradient(180deg, #0d1017, #0b0d11);
+  background: linear-gradient(180deg, #0d1017, #0b0d11);
 }
-/* 背景壁纸层(DSH 设置窗同款观感):当前壁纸预览图放大+重度模糊+压暗,
+.standalone .wb-bg::after {
+  content: ''; position: absolute; inset: 0;
+  background:
+    radial-gradient(56% 48% at 14% 10%, rgba(255, 158, 207, .20), transparent 70%),
+    radial-gradient(52% 46% at 88% 8%, rgba(56, 132, 255, .18), transparent 72%),
+    radial-gradient(44% 42% at 6% 88%, rgba(94, 224, 197, .11), transparent 72%),
+    linear-gradient(180deg, rgba(13, 16, 23, .40), rgba(11, 13, 17, .52));
+}
+/* 背景壁纸层(DSH 设置窗同款观感):当前壁纸预览图放大+重度模糊,
    让独立模式的玻璃面板真正取糊壁纸色彩;无壁纸时退回极光。 */
 .wb-bg img {
   position: absolute; inset: -64px; width: calc(100% + 128px); height: calc(100% + 128px);
   object-fit: cover;
-  filter: blur(52px) brightness(.45) saturate(1.25);
+  filter: blur(48px) brightness(.68) saturate(1.35);
 }
 
 .app { position: relative; z-index: 1; display: flex; flex-direction: column; width: 100%; height: 100%; }
