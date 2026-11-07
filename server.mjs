@@ -1781,7 +1781,11 @@ const server = http.createServer(async (req, res) => {
       };
       const glassBase = lightWall ? (a.glassColor || lightBase)
         : (a.glassColorDark || a.glassColor || lightBase);   // 深色侧单独玻璃色(空=跟随主色,上游 glassDarkSeparate 思路)
-      const glassLight = hexLum(glassBase) > 0.55;              // 玻璃本身偏亮?
+      const glassRGB = (() => { const m = /^#?([0-9a-f]{6})$/i.exec(String(glassBase || '')); const n = m ? parseInt(m[1], 16) : 0x14161c; return ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255); })();
+      const glassLight = hexLum(glassBase) > 0.55;
+      // 文字描边颜色跟随明暗侧:暗文字(亮壁纸)配白光晕,浅文字(暗壁纸)配黑影 ——
+      // 旧实现恒用黑影,亮壁纸下深色文字会被黑晕弄脏
+      const shadowCol = lightWall ? '255,255,255' : '0,0,0';
       // 聊天框文字:fontColorComposer 空 = 按玻璃明暗自动(聊天框底色是玻璃,与主区亮度无关)
       const glassFg = a.fontColorComposer || (glassLight ? '#1b1e24' : '#eef1f6');
       // 强调色/链接文字:用户指定 accentColor 优先;空 = 按明暗侧自动高对比蓝
@@ -1794,7 +1798,7 @@ const server = http.createServer(async (req, res) => {
 html, body { background: #101216 !important; }
 #root, #root button, #root .btn { font-family: ${a.fontFamily ? JSON.stringify(a.fontFamily) + ' !important' : 'inherit'}; }
 ${a.cursor ? '#root { cursor: ' + a.cursor + ' !important; }' : ''}
-#root { position: relative; z-index: 1; ${a.zoom === 100 ? '' : `zoom: ${a.zoom}%; `}text-shadow: 0 1px 2px rgba(0,0,0,${(shadow * 0.7).toFixed(2)}), 0 0 ${(Math.max(2, Math.round(a.stroke / 10)))}px rgba(0,0,0,${(shadow * 0.45).toFixed(2)}); }
+      #root { position: relative; z-index: 1; ${a.zoom === 100 ? '' : `zoom: ${a.zoom}%; `}text-shadow: 0 1px 2px rgba(${shadowCol},${(shadow * 0.7).toFixed(2)}), 0 0 ${(Math.max(2, Math.round(a.stroke / 10)))}px rgba(${shadowCol},${(shadow * 0.45).toFixed(2)}); }
 /* 文字渲染优化(细体抗锯齿):玻璃上小字更干净;optimizeLegibility 启用合字与字距微调 */
 ${a.fontSmooth ? '#root { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }' : ''}
 /* 消息正文字号缩放(上游 themeSize 的 Tailwind 适配):段落/列表走 zoom 缩放,
@@ -1914,6 +1918,18 @@ ${(a.fontFamilyComposer || a.fontSizeComposer || a.fontWeightComposer) ? `
 [data-testid="conversation-bottom-dock-transition-layer"] {
   will-change: auto !important;
 }
+
+/* ── 显示细节主题化(全部跟随现有明暗侧/强调色/玻璃设置,无新旋钮)── */
+/* 选中文本:强调色底 + 配对文字色(浏览器默认蓝在玻璃上突兀) */
+#root ::selection { background: ${accentFg}; color: ${accentOn}; }
+/* 输入占位符:跟随主题文字色降透明(默认灰在自定义玻璃上对比随机) */
+#root ::placeholder { color: ${fg}99 !important; opacity: 1 !important; }
+/* 滚动条:玻璃色染色,悬停加深 */
+#root ::-webkit-scrollbar { width: 10px; height: 10px; }
+#root ::-webkit-scrollbar-thumb { background: rgba(${glassRGB}, .38); border-radius: 5px; border: 2px solid transparent; background-clip: padding-box; }
+#root ::-webkit-scrollbar-thumb:hover { background: rgba(${glassRGB}, .58); border: 2px solid transparent; background-clip: padding-box; }
+#root ::-webkit-scrollbar-track { background: transparent; }
+#root ::-webkit-scrollbar-corner { background: transparent; }
 
 `;
       res.writeHead(200, {
