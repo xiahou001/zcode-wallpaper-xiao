@@ -22,6 +22,7 @@
  * 状态持久化:~/.we-wallpaper/state.json
  */
 import http from 'node:http';
+import zlib from 'node:zlib';
 import { spawn, execFileSync, execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -1937,14 +1938,30 @@ ${(a.fontFamilyComposer || a.fontSizeComposer || a.fontWeightComposer) ? `
 #root ::-webkit-scrollbar-thumb:hover { background: rgba(${glassRGB}, .58); border: 2px solid transparent; background-clip: padding-box; }
 #root ::-webkit-scrollbar-track { background: transparent; }
 #root ::-webkit-scrollbar-corner { background: transparent; }
+/* 告知浏览器使用暗色原生控件(下拉/勾选框/日期选择器) */
+:root { color-scheme: dark; }
+/* 键盘导航焦点环:强调色描边,鼠标点击不出现(:focus-visible 仅键盘触发) */
+#root :focus-visible { outline: 2px solid ${accentFg}; outline-offset: 2px; border-radius: 4px; }
+/* 平滑滚动 + 无障碍减少动画 */
+@media (prefers-reduced-motion: no-preference) {
+  #root { scroll-behavior: smooth; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #root, #root * { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+}
 
 `;
+      // gzip:客户端声明 Accept-Encoding: gzip 时压缩响应(8KB CSS ≈ 2KB)
+      const acceptEnc = req.headers['accept-encoding'] || '';
+      const canGzip = acceptEnc.includes('gzip');
+      const body = canGzip ? zlib.gzipSync(Buffer.from(css), { level: 6 }) : Buffer.from(css);
       res.writeHead(200, {
         'Content-Type': 'text/css; charset=utf-8',
         'Cache-Control': 'no-store',
         'Access-Control-Allow-Origin': '*',
+        ...(canGzip ? { 'Content-Encoding': 'gzip' } : {}),
       });
-      return res.end(css);
+      return res.end(body);
     }
     if (p === '/bootstrap.js') {
       const js = fs.readFileSync(path.join(__dirname, 'public', 'bootstrap.js'), 'utf8');
