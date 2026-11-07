@@ -1418,6 +1418,7 @@ const server = http.createServer(async (req, res) => {
       if (body.fontSizeComposer != null) state.appearance.fontSizeComposer = Number(body.fontSizeComposer);
       if (body.fontWeightComposer != null) state.appearance.fontWeightComposer = Number(body.fontWeightComposer);
       if (body.chatTextScale != null) state.appearance.chatTextScale = Number(body.chatTextScale);
+      if (body.chatCodeScale != null) state.appearance.chatCodeScale = Number(body.chatCodeScale);
       if (body.fontSmooth != null) state.appearance.fontSmooth = !!body.fontSmooth;
       saveState();
       return sendJSON(res, 200, state);
@@ -1799,6 +1800,7 @@ ${a.fontSmooth ? '#root { -webkit-font-smoothing: antialiased; text-rendering: o
 /* 消息正文字号缩放(上游 themeSize 的 Tailwind 适配):段落/列表走 zoom 缩放,
    保留元素自身的相对层次(Tailwind 工具类的绝对字号无法用继承缩放);100 = 不动 */
 ${a.chatTextScale && a.chatTextScale !== 100 ? `#root [data-slot="sidebar-inset"] p, #root [data-slot="sidebar-inset"] li { zoom: ${(a.chatTextScale / 100).toFixed(2)}; }` : ''}
+${a.chatCodeScale && a.chatCodeScale !== 100 ? `#root [data-slot="sidebar-inset"] code { zoom: ${(a.chatCodeScale / 100).toFixed(2)}; }` : ''}
 #we-wp-layer { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; z-index: 0; pointer-events: none;${a.flip ? ' transform: scaleX(-1) !important;' : ''} }
 /* 亮度/画面微调/透明度/暗化由播放层(player.js 的 applyStageFx)统一作用在
    #stage 上 —— 这里不再叠加 filter,否则与播放层双重相乘。 */

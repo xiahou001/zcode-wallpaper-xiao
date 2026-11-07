@@ -764,6 +764,9 @@
     sliderRow(s11, '正文字号', '消息区段落/列表缩放;100 = 原生', state.appearance.chatTextScale != null ? state.appearance.chatTextScale : 100, 85, 140, function (v) {
       state.appearance.chatTextScale = v; api('/api/appearance', { chatTextScale: v });
     });
+    sliderRow(s11, '代码字号', '行内代码/代码块缩放(锚点经 embed 诊断实证);100 = 原生', state.appearance.chatCodeScale != null ? state.appearance.chatCodeScale : 100, 85, 140, function (v) {
+      state.appearance.chatCodeScale = v; api('/api/appearance', { chatCodeScale: v });
+    });
     switchRow(s11, '文字渲染优化', '细体抗锯齿 + 合字字距微调', !!state.appearance.fontSmooth, function (v) {
       api('/api/appearance', { fontSmooth: v }).then(setState);
     });

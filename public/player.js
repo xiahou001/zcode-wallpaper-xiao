@@ -143,6 +143,7 @@
     const LIVE_STALL_TICKS = 12, LIVE_RESUME_AT = 3;
     let watchMode = 'first';     // first=首帧看护 | runtime=运行期心跳
     let stallTicks = 0, resumed = false;
+    let transferExtends = 0;     // 传输类软失败重试计数(上限 2,源自上游 live-transfer-retry)
     const expectPlaying = function () {
       // 与 applyPaused 同口径的有效暂停判定:任一成立就不期望出帧
       if (state.paused || document.hidden) return false;
@@ -182,7 +183,24 @@
             try { $('hud-title').textContent = w.title + '(加载中 ' + Math.round((Date.now() - mountAt) / 1000) + 's)'; } catch (e3) {}
             return;
           }
-          if (p && p.served && Date.now() - startAt > budgetMs) { clearInterval(sceneWatchdog); wallpaperFailed(w, 'scene-no-frames'); }
+          // 预算到期,按传输状态分类(上游 live-layer-watch:传输未走完 ≠ 渲染失败):
+          if (p && p.served && Date.now() - startAt > budgetMs) {
+            // ② 传输完成过(至少一次)仍无帧 = 渲染侧 —— 硬失败进降级链+失败记忆
+            clearInterval(sceneWatchdog);
+            wallpaperFailed(w, 'scene-no-frames');
+          } else if (p && !p.served && Date.now() - startAt > budgetMs) {
+            // ① 包体从未完整送达(served=0)= 传输侧 —— 软失败:45s 冷却重试最多 2 次,
+            //    不判死不落失败记忆(旧实现被 served 闸挡住永不判死,坏包会永远挂在看护里);
+            //    重试仍送不到才硬失败(此时才进降级链+记忆)
+            if (transferExtends < 2) {
+              transferExtends += 1;
+              startAt = Date.now() + 45000;
+              try { $('hud-title').textContent = w.title + '(传输中断,重试 ' + transferExtends + '/2)'; } catch (e4) {}
+              return;
+            }
+            clearInterval(sceneWatchdog);
+            wallpaperFailed(w, 'scene-transfer-dead');
+          }
         }).catch(function () {
   // 兜底:偶发的挂起请求超时中止后,不让未处理 rejection 刷屏
   window.addEventListener('unhandledrejection', function (e) { e.preventDefault(); });});
