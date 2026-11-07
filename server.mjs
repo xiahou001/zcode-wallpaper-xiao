@@ -1787,7 +1787,14 @@ const server = http.createServer(async (req, res) => {
       // 旧实现恒用黑影,亮壁纸下深色文字会被黑晕弄脏
       const shadowCol = lightWall ? '255,255,255' : '0,0,0';
       // 聊天框文字:fontColorComposer 空 = 按玻璃明暗自动(聊天框底色是玻璃,与主区亮度无关)
-      const glassFg = a.fontColorComposer || (glassLight ? '#1b1e24' : '#eef1f6');
+      // 自动档升级为 WCAG 对比度选色(上游 glassFidelity 可读性红线的简化实现):
+// 简单 luma>0.55 阈值对饱和色会选错方向(中饱和蓝 luma≈0.5 但 WCAG 亮度≈0.2),
+// 对比度算出来选深/浅里更高的那个,饱和玻璃色下文字不再看不清
+const wcagLum = (hex) => { const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || '')); if (!m) return 0; const n = parseInt(m[1], 16); const lin = (c) => { c /= 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); }; return 0.2126 * lin((n >> 16) & 255) + 0.7152 * lin((n >> 8) & 255) + 0.0722 * lin(n & 255); };
+const wcagContrast = (la, lb) => (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+const glassLum = wcagLum(glassBase);
+const glassFgAuto = wcagContrast(glassLum, wcagLum('#1b1e24')) >= wcagContrast(glassLum, wcagLum('#eef1f6')) ? '#1b1e24' : '#eef1f6';
+const glassFg = a.fontColorComposer || glassFgAuto;
       // 强调色/链接文字:用户指定 accentColor 优先;空 = 按明暗侧自动高对比蓝
       // (默认蓝在玻璃上实测 ~2.5:1,WCAG 要求 4.5:1),并成对给出强调底色上的文字。
       const accentFg = a.accentColor || (lightWall ? '#3b5bdb' : '#a5b4ff');
